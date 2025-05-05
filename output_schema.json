@@ -1,0 +1,34 @@
+{
+  "namespace": "lsst.tbd",
+  "type": "record",
+  "name": "ToO_alert",
+  "fields": [
+    {
+      "name": "alert_type",
+      "type": "string"
+    },
+    {
+      "name": "event_trigger_timestamp",
+      "type": "string"
+    },
+    {
+      "name": "reward_map",
+      "type": {
+        "type": "array",
+        "items": "boolean"
+      }
+    },
+    {
+      "name": "reward_map_nside",
+      "type": "int"
+    },
+    {
+      "name": "is_test",
+      "type": "boolean"
+    },
+    {
+      "name": "is_update",
+      "type": "boolean"
+    }
+  ]
+}
