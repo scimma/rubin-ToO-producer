@@ -1,5 +1,6 @@
 astropy
 hop-client
 numpy
+orjson
 PyYAML
 requests

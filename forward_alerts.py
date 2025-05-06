@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import numpy
+import orjson
 import requests
 import sys
 import yaml
@@ -190,28 +191,7 @@ class Skymap:
 		return flat_map
 
 def write_json(records, compressed: bool=False):
-	def replace_binary(obj):
-		if isinstance(obj, str) \
-		      or obj is None \
-		      or obj is True or obj is False \
-		      or isinstance(obj, int) \
-		      or isinstance(obj, float):
-			return obj
-		elif isinstance(obj, bytes):
-			return base64.b64encode(obj).decode("utf-8")
-		elif isinstance(obj, dict):
-			for k,v in obj.items():
-				obj[k] = replace_binary(v)
-			return obj
-		elif isinstance(obj, list):
-			return [replace_binary(v) for v in obj]
-		elif isinstance(obj, numpy.ndarray):
-			return replace_binary(list(obj))
-		else:
-			raise ValueError(f"Unexpected object type: {type(obj)}")
-	
-	data=replace_binary(copy.deepcopy(records))
-	buf=json.dumps(data)
+	buf=orjson.dumps(records, option=orjson.OPT_SERIALIZE_NUMPY)
 	if(compressed):
 		zbuf=zlib.compress(buf.encode("utf-8"), level=9)
 		return zbuf
