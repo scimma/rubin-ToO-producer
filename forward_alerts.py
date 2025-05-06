@@ -263,6 +263,7 @@ class KafkaSender(AlertSender):
 	def send(self, data: dict, test: bool=False):
 		msg = hop.models.AvroBlob(content=data, schema=self.schema)
 		self.producer.write(msg, test=test)
+		self.producer.flush()  # mesage rate should be low, nudge librdkafka not to wait for more
 
 
 class ConfluentRESTSender(AlertSender):
@@ -606,9 +607,9 @@ for topic, filter in config.filters.items():
 
 for message, metadata in consumer.read(metadata=True, autocommit=False):
 	# TODO: this structure assumes that all messages are avro, and should be generalized
-	for record in message.content:
+	for record in (message.content if not message.single_record else [message.content]):
 		if metadata.topic not in filters:
-			logger.error(f"Message metadata claims it is form unexpected topic '{metadata.topic}'")
+			logger.error(f"Message metadata claims it is from unexpected topic '{metadata.topic}'")
 			continue
 		try:
 			filters[metadata.topic].process(record, metadata)
