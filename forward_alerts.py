@@ -158,13 +158,15 @@ class Skymap:
 		
 		return flat_map
 	
-	def make_flat_thresholded_map(self, target_probability: float):
+	def make_flat_binary_map(self, target_probability: float, target_order = None):
 		# first, figure out how many pixels it must be from its order, which must be the maximum
 		# order in the original map
-		flat_order=max(self.pixel_areas.keys())
-		flat_n_npixels=12<<(flat_order<<1)
+		if target_order is None:
+			target_order=max(self.pixel_areas.keys())
+		flat_n_npixels=12<<(target_order<<1)
+		print(f"Making order {target_order} map with {flat_n_npixels} pixels")
 		
-		flat_map = numpy.zeros(flat_n_npixels)
+		flat_map = numpy.zeros(flat_n_npixels, dtype=numpy.int8)
 		
 		# next, iterate over the original map, and writing ones for all pixels which are above the
 		# target threshold
@@ -175,11 +177,16 @@ class Skymap:
 			
 			# the original pixel's NESTED ordering index, within its order
 			n_idx = u_idx - (4<<(2*order))
-			# each unit of increase in order adds two bits to the child pixel indices
-			min_idx = n_idx << (2 * (flat_order - order))
-			# the increase in order splits the original pixel into this many pixels
-			idx_range = 1 << (2 * (flat_order - order))
-			flat_map[min_idx:(min_idx+idx_range)] = 1.0
+			if order < target_order:
+				# each unit of increase in order adds two bits to the child pixel indices
+				min_idx = n_idx << (2 * (target_order - order))
+				# the increase in order splits the original pixel into this many pixels
+				idx_range = 1 << (2 * (target_order - order))
+				flat_map[min_idx:(min_idx+idx_range)] = 1.0
+			else:
+				# throw away two bits for each unit of difference in order to find parent pixel
+				p_idx = n_idx >> (2 * (order - target_order))
+				flat_map[p_idx] = 1.0
 			
 			area = self.pixel_areas[order]
 			prob=p_dens * area
@@ -532,11 +539,12 @@ class LVKAlertFilter(AlertFilter):
 		return passes, result_data
 	
 	def generate_scheduling_data(self, message, metadata, alert_data):
-		flat_map = alert_data["skymap"].make_flat_thresholded_map(0.9)
+		target_order = 5
+		flat_map = alert_data["skymap"].make_flat_binary_map(0.9, target_order)
 		return {"alert_type": alert_data["type"],
 		        "event_trigger_timestamp": message["event"]["time"],
 		        "reward_map": flat_map,
-		        "reward_map_nside": int(math.sqrt(len(flat_map)/12)),
+		        "reward_map_nside": 1<<target_order,
 		        }
 
 
