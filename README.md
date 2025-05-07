@@ -35,3 +35,25 @@ An example configuration file might look like:
 	output-options:
 	  url: "http://localhost:8082/topics/topic3"
 
+### Event Types
+
+The following set of labels is used in the output records to identify the various cases outlined in the recommednation paper:
+
+	| too_types_to_follow in scheduler 	| Corresponding strategy from ToO 2024 recommendation 	|
+	|----------------------------------	|-----------------------------------------------------	|
+	| GW_case_A                        	| -                                                   	|
+	| GW_case_B                        	| GW gold                                             	|
+	| GW_case_C                        	| unidentified gold                                   	|
+	| GW_case_D                        	| GW silver                                           	|
+	| GW_case_E                        	| Unidentified silver                                 	|
+	| BBH_case_A                       	| BBH_dark_near                                       	|
+	| BBH_case_B                       	| BBH_dark_far                                        	|
+	| BBH_case_C                       	| BBH_bright                                          	|
+	| lensed_BNS_case_A                	| 900 deg skymap                                      	|
+	| lensed_BNS_case_B                	| 15 deg skymap                                       	|
+	| neutrino and neutrino_u          	| Neutrino                                            	|
+	| SSO_night                        	| Small PHA                                           	|
+	| SSO_twilight                     	| Small PHA                                           	|
+	| GW_case_large                    	| Large GW skymaps                                    	|
+	| Lensed_GRB                       	| Lensed GRB                                          	|
+	| SN_Galactic                      	| Galactic supernova                                  	|

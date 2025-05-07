@@ -475,9 +475,8 @@ class LVKAlertFilter(AlertFilter):
 		  message["event"]["properties"]["HasNS"] >= 0.5 and \
 		  message["event"]["properties"]["HasRemnant"] >= 0.5:
 			passes = True
-			quality = "gold" if prob_area < 0.030461 else "silver"
-			result_data["type"] = f"BNS/NSBH-{quality}"
-			logger.info(f"LVK alert meets criteria for {quality} BNS or NSBH merger")
+			result_data["type"] = "GW_case_B" if prob_area < 0.030461 else "GW_case_D"
+			logger.info(f"LVK alert meets criteria for {result_data['type']} BNS or NSBH merger")
 		
 		# TODO: 'Very large skymaps'
 		# Requirements:
@@ -490,6 +489,8 @@ class LVKAlertFilter(AlertFilter):
 		  (message["event"]["classification"]["BNS"] + 
 		   message["event"]["classification"]["NSBH"]) >= 0.9 and \
 		   prob_area >= 0.304617:
+			# this will be the type when full criteria for these events are certain
+			result_data["type"] = "GW_case_large"
 			logger.warning("Alert might pass Very Large Skymap conditions, "
 			               "but these are not definitely implemented")
 		
@@ -512,9 +513,8 @@ class LVKAlertFilter(AlertFilter):
 		  message["event"]["far"] < 1.6e-08 and \
 		  prob_area < 0.2741556:
 			passes = True
-			quality = "gold" if prob_area < 4.569261e-3 else "silver"
-			result_data["type"] = f"LensedBNS-{quality}"
-			logger.info(f"LVK alert meets criteria for {quality} lensed BNS merger")
+			result_data["type"] = "lensed_BNS_case_B" if prob_area < 4.569261e-3 else "lensed_BNS_case_A"
+			logger.info(f"LVK alert meets criteria for {result_data['type']} lensed BNS merger")
 
 		# TODO: implement
 		# Black Hole-Black Hole Mergers
@@ -533,9 +533,9 @@ class LVKAlertFilter(AlertFilter):
 		if not passes and \
 		   message["alert_type"] == "INITIAL" and \
 		   prob_area < 0.152308:
-			quality = "gold" if prob_area < 4.569261e-3 else "silver"
-			logger.warning(f"Alert might pass Unidentified Source conditions with {quality} "
-			               "quality, but these are not definitely implemented")
+			result_data["type"] = "GW_case_C" if prob_area < 4.569261e-3 else "GW_case_E"
+			logger.warning("Alert might pass Unidentified Source conditions for type "
+			               f"{result_data['type']}, but these are not definitely implemented")
 		
 		return passes, result_data
 	
