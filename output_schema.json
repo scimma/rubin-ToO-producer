@@ -1,7 +1,7 @@
 {
-  "namespace": "lsst.tbd",
+  "namespace": "lsst.scimma",
   "type": "record",
-  "name": "ToO_alert",
+  "name": "too_alert",
   "fields": [
     {
       "name": "source",
