@@ -48,6 +48,11 @@
       "name": "is_update",
       "type": "boolean",
       "doc": "A flag indicating that this is an update to a previous version of the same event"
+    },
+    {
+      "name": "timestamp",
+      "type": "long",
+      "doc": "A UTC timestamp with millisecond precision corresponding to when this messge was generated, unless that would result in the same value as used in a previous message"
     }
   ]
 }

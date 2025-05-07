@@ -4,6 +4,7 @@ import argparse
 from astropy.io import fits
 import astropy.table
 import copy
+import datetime
 import fastavro
 import hop
 from io import BytesIO
@@ -295,6 +296,8 @@ class ConfluentRESTSender(AlertSender):
 
 
 class AlertFilter:
+	last_timestamp = 0
+
 	def __init__(self, history: dict, sender: AlertSender, allow_tests: bool):
 		"""
 		Args:
@@ -415,6 +418,11 @@ class AlertFilter:
 		scheduling_data["source"] = alert_id
 		scheduling_data["is_test"] = is_test
 		scheduling_data["is_update"] = is_update
+		timestamp = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
+		if timestamp <= AlertFilter.last_timestamp:
+			timestamp = AlertFilter.last_timestamp + 1
+		AlertFilter.last_timestamp = timestamp
+		scheduling_data["timestamp"] = timestamp
 		
 		self.sender.send(scheduling_data, test=is_test)
 		return True
