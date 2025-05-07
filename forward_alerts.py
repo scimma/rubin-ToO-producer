@@ -164,7 +164,7 @@ class Skymap:
 		if target_order is None:
 			target_order=max(self.pixel_areas.keys())
 		flat_n_npixels=12<<(target_order<<1)
-		print(f"Making order {target_order} map with {flat_n_npixels} pixels")
+		#print(f"Making order {target_order} map with {flat_n_npixels} pixels")
 		
 		flat_map = numpy.zeros(flat_n_npixels, dtype=numpy.int8)
 		
@@ -412,6 +412,7 @@ class AlertFilter:
 			self.history[alert_id] = id_meta
 		
 		scheduling_data = self.generate_scheduling_data(message, metadata, alert_data)
+		scheduling_data["source"] = alert_id
 		scheduling_data["is_test"] = is_test
 		scheduling_data["is_update"] = is_update
 		
@@ -541,7 +542,8 @@ class LVKAlertFilter(AlertFilter):
 	def generate_scheduling_data(self, message, metadata, alert_data):
 		target_order = 5
 		flat_map = alert_data["skymap"].make_flat_binary_map(0.9, target_order)
-		return {"alert_type": alert_data["type"],
+		return {"instrument": message["event"]["instruments"],
+		        "alert_type": alert_data["type"],
 		        "event_trigger_timestamp": message["event"]["time"],
 		        "reward_map": flat_map,
 		        "reward_map_nside": 1<<target_order,

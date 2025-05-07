@@ -4,31 +4,50 @@
   "name": "ToO_alert",
   "fields": [
     {
+      "name": "source",
+      "type": "string",
+      "doc": "A unique identifier for this event"
+    },
+    {
+      "name": "instrument",
+      "type": {
+        "type": "array",
+        "items": "string"
+      },
+      "doc": "A list of names of instruments responsible for the observations which lead to issuing this alert"
+    },
+    {
       "name": "alert_type",
-      "type": "string"
+      "type": "string",
+      "doc": "The categorization of this alert, defined by which filter criteria it passed"
     },
     {
       "name": "event_trigger_timestamp",
-      "type": "string"
+      "type": "string",
+      "doc": "The UTC time of the event described by the alert in ISO-8601 format"
     },
     {
       "name": "reward_map",
       "type": {
         "type": "array",
         "items": "boolean"
-      }
+      },
+      "doc": "The pixels of a HEALPix map, in the nested ordering, with binary values indicating whether they should be targeted for observation"
     },
     {
       "name": "reward_map_nside",
-      "type": "int"
+      "type": "int",
+      "doc": "The N_side parameter describing the resolution of the map data in reward_map"
     },
     {
       "name": "is_test",
-      "type": "boolean"
+      "type": "boolean",
+      "doc": "A flag indicating whether the event is a test or simulated alert"
     },
     {
       "name": "is_update",
-      "type": "boolean"
+      "type": "boolean",
+      "doc": "A flag indicating that this is an update to a previous version of the same event"
     }
   ]
 }
