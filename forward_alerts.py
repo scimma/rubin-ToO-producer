@@ -438,8 +438,12 @@ class LVKAlertFilter(AlertFilter):
 		return message["superevent_id"][0] != "S"
 	
 	def alert_identifier(self, message, metadata):
+		if "event" in message and message["event"] is not None:
+			t = message["event"]["time"]
+		else:
+			t = message["time_created"]
 		return message["superevent_id"], \
-		       {"type": message["alert_type"], "time": message["time_created"]}
+		       {"type": message["alert_type"], "time": t}
 	
 	def overrides_previous(self, old_meta, new_meta):
 		# Retractions override previous alerts.
