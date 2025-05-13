@@ -493,7 +493,7 @@ class LVKAlertFilter(AlertFilter):
 		# Requirements:
 		# - Only trigger on Initial maps?
 		# - "The probability of being BNS or NS-BH should be greater than 90%: BNS+NS-BH>=0.9"
-		# - False alram rate requirement?
+		# - False alarm rate requirement?
 		# - 90% area > 1000 square degrees (0.304617 sr)
 		# - Remnant requirement?
 		if message["alert_type"] == "INITIAL" and \
@@ -576,64 +576,65 @@ output_constructors = {
 	"confluent_rest": ConfluentRESTSender,
 }
 
-logging.basicConfig(level=logging.INFO) # TODO: make configurable
+if __name__ == "__main__":
+	logging.basicConfig(level=logging.INFO) # TODO: make configurable
 
-parser = argparse.ArgumentParser()
-parser.add_argument("-f", "--config-file", help="read configuration from a YAML file",
-                    action=LoadYamlConfig)
-parser.add_argument("--allow-tests", type=bool, default=False,
-                    help="whether to process or discard test alerts")
-parser.add_argument("--input-type", type=str, choices=input_constructors.keys(), default="files",
-                    help="the mechanism to use for reading input alerts")
-parser.add_argument("--input-options", type=json.loads, default={}, 
-                    help="settings for the input consumer")
-parser.add_argument("--filters", type=json.loads, default={}, 
-                    help="mapping of topic names to filter types")
-parser.add_argument("--output-type", type=str, choices=output_constructors.keys(), default="stdout",
-                    help="the mechanism to use for sending passing alert data")
-parser.add_argument("--output-options", type=json.loads, default={}, 
-                    help="settings for the output sender")
-parser.add_argument("input_files", nargs='*', help="files to be read with the file consumer")
+	parser = argparse.ArgumentParser()
+	parser.add_argument("-f", "--config-file", help="read configuration from a YAML file",
+						action=LoadYamlConfig)
+	parser.add_argument("--allow-tests", type=bool, default=False,
+						help="whether to process or discard test alerts")
+	parser.add_argument("--input-type", type=str, choices=input_constructors.keys(), default="files",
+						help="the mechanism to use for reading input alerts")
+	parser.add_argument("--input-options", type=json.loads, default={}, 
+						help="settings for the input consumer")
+	parser.add_argument("--filters", type=json.loads, default={}, 
+						help="mapping of topic names to filter types")
+	parser.add_argument("--output-type", type=str, choices=output_constructors.keys(), default="stdout",
+						help="the mechanism to use for sending passing alert data")
+	parser.add_argument("--output-options", type=json.loads, default={}, 
+						help="settings for the output sender")
+	parser.add_argument("input_files", nargs='*', help="files to be read with the file consumer")
 
-config = parser.parse_args()
+	config = parser.parse_args()
 
-if config.input_type not in input_constructors:
-	logger.fatal(f"Unrecognized input type: {config.input_type}")
-	exit(1)
-if config.output_type not in output_constructors:
-	logger.fatal(f"Unrecognized output type: {config.output_type}")
-	exit(1)
+	if config.input_type not in input_constructors:
+		logger.fatal(f"Unrecognized input type: {config.input_type}")
+		exit(1)
+	if config.output_type not in output_constructors:
+		logger.fatal(f"Unrecognized output type: {config.output_type}")
+		exit(1)
 
-with open("output_schema.json") as schema_file:
-	output_schema = json.load(schema_file)
+	with open("output_schema.json") as schema_file:
+		output_schema = json.load(schema_file)
 
-# TODO: The history grows unboundedly. How/when should items be removed?
-history = {}
+	# TODO: The history grows unboundedly. How/when should items be removed?
+	history = {}
 
-# Hack: for a few special cases, move config data around
-if config.input_type == "files":
-	if "paths" in config.input_options:
-		config.input_options["paths"].extend(config.input_files)
-	else:
-		config.input_options["paths"] = config.input_files
-if config.input_type == "kafka":
-	config.input_options["ignoretest"] = not config.allow_tests
+	# Hack: for a few special cases, move config data around
+	if config.input_type == "files":
+		if "paths" in config.input_options:
+			config.input_options["paths"].extend(config.input_files)
+		else:
+			config.input_options["paths"] = config.input_files
+	if config.input_type == "kafka":
+		config.input_options["ignoretest"] = not config.allow_tests
 
-consumer = input_constructors[config.input_type](**config.input_options)
-sender = output_constructors[config.output_type](output_schema=output_schema, 
-                                                 **config.output_options)
-filters = {}
-for topic, filter in config.filters.items():
-	filters[topic] = filter_constructors[filter](history, sender, allow_tests=config.allow_tests)
+	consumer = input_constructors[config.input_type](**config.input_options)
+	sender = output_constructors[config.output_type](output_schema=output_schema, 
+	                                                 **config.output_options)
+	filters = {}
+	for topic, filter in config.filters.items():
+		filters[topic] = filter_constructors[filter](history, sender, allow_tests=config.allow_tests)
 
-for message, metadata in consumer.read(metadata=True, autocommit=False):
-	# TODO: this structure assumes that all messages are avro, and should be generalized
-	for record in (message.content if not message.single_record else [message.content]):
-		if metadata.topic not in filters:
-			logger.error(f"Message metadata claims it is from unexpected topic '{metadata.topic}'")
-			continue
-		try:
-			filters[metadata.topic].process(record, metadata)
-			consumer.mark_done(metadata)
-		except Exception as e:
-			logger.error(f"Error processing alert: {e}\nDropping and continuing with next")
+	for message, metadata in consumer.read(metadata=True, autocommit=False):
+		# TODO: this structure assumes that all messages are avro, and should be generalized
+		for record in (message.content if not message.single_record else [message.content]):
+			if metadata.topic not in filters:
+				logger.error(f"Message metadata claims it is from unexpected topic '{metadata.topic}'")
+				continue
+			try:
+				filters[metadata.topic].process(record, metadata)
+				consumer.mark_done(metadata)
+			except Exception as e:
+				logger.error(f"Error processing alert: {e}\nDropping and continuing with next")
