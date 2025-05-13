@@ -130,9 +130,8 @@ class Skymap:
 			area = self.pixel_areas[order]
 			prob=p_dens * area
 			summed_prob+=prob
-			if summed_prob < target_probability:
-				summed_area+=area
-			else:
+			summed_area+=area
+			if summed_prob >= target_probability:
 				break
 		return summed_area.sum
 	
