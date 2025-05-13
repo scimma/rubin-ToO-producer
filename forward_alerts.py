@@ -53,7 +53,7 @@ class KahanAdder:
 		return self.sum
 	
 	def __iadd__(self, value):
-		y = value - self.comp
+		y = float(value) - self.comp
 		t = self.sum + y
 		self.comp = (t - self.sum) - y
 		self.sum = t
