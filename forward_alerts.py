@@ -469,7 +469,7 @@ class LVKAlertFilter(AlertFilter):
 		# Requirements:
 		# - "Only trigger on an Initial map, do not trigger on Preliminary"
 		# - "The probability of being BNS or NS-BH should be greater than 90%: BNS+NS-BH>=0.9"
-		# - "False alarm rate less than 1 per 1 year: FAR < 1.6e-08 Hz"
+		# - "False alarm rate less than 1 per 1 year: FAR < ~1.6e-08~ 3.17e-8 Hz"
 		# - "90% sky area less than 500 square degrees" (500 deg^2 = 0.152308 sr)
 		# - "For NS-BH events, require that there is a good probability that mass has been 
 		#    "ejected (these numbers will be changed based on O4 results and O5 projections): 
@@ -481,7 +481,7 @@ class LVKAlertFilter(AlertFilter):
 		if message["alert_type"] == "INITIAL" and \
 		  (message["event"]["classification"]["BNS"] + 
 		   message["event"]["classification"]["NSBH"]) >= 0.9 and \
-		  message["event"]["far"] < 1.6e-08 and \
+		  message["event"]["far"] < 3.17e-08 and \
 		  prob_area < 0.152308 and \
 		  message["event"]["properties"]["HasNS"] >= 0.5 and \
 		  message["event"]["properties"]["HasRemnant"] >= 0.5:
@@ -511,7 +511,7 @@ class LVKAlertFilter(AlertFilter):
 		# - "probability that the GW source includes one or more compact objects in the range
 		#   3 – 5 M☉ of no less than 90%: p(HasMassGap)>=0.9"
 		# - probability that the GW source is a NS-BH merger of less than 10% : p(NS-BH)<0.1
-		# - "False alarm rate less than 1 per 1 year: FAR < 1.6e-08 Hz"
+		# - "False alarm rate less than 1 per 1 year: FAR < ~1.6e-08~ 3.17e-8 Hz"
 		# - "90% credible GW sky localization of no more than 900 degree^2"
 		#   (900 deg^2 = 0.2741556)
 		#
@@ -521,7 +521,7 @@ class LVKAlertFilter(AlertFilter):
 		if message["alert_type"] == "INITIAL" and \
 		  message["event"]["properties"]["HasMassGap"] >= 0.9 and \
 		  message["event"]["classification"]["NSBH"] < 0.1 and \
-		  message["event"]["far"] < 1.6e-08 and \
+		  message["event"]["far"] < 3.17e-8 and \
 		  prob_area < 0.2741556:
 			passes = True
 			result_data["type"] = "lensed_BNS_case_B" if prob_area < 4.569261e-3 else "lensed_BNS_case_A"
