@@ -166,7 +166,7 @@ class Skymap:
 		flat_n_npixels=12<<(target_order<<1)
 		#print(f"Making order {target_order} map with {flat_n_npixels} pixels")
 		
-		flat_map = numpy.zeros(flat_n_npixels, dtype=numpy.int8)
+		flat_map = numpy.zeros(flat_n_npixels, dtype=bool)
 		
 		# next, iterate over the original map, and writing ones for all pixels which are above the
 		# target threshold
@@ -182,11 +182,11 @@ class Skymap:
 				min_idx = n_idx << (2 * (target_order - order))
 				# the increase in order splits the original pixel into this many pixels
 				idx_range = 1 << (2 * (target_order - order))
-				flat_map[min_idx:(min_idx+idx_range)] = 1.0
+				flat_map[min_idx:(min_idx+idx_range)] = True
 			else:
 				# throw away two bits for each unit of difference in order to find parent pixel
 				p_idx = n_idx >> (2 * (order - target_order))
-				flat_map[p_idx] = 1.0
+				flat_map[p_idx] = True
 			
 			area = self.pixel_areas[order]
 			prob=p_dens * area
@@ -200,7 +200,7 @@ class Skymap:
 def write_json(records, compressed: bool=False):
 	buf=orjson.dumps(records, option=orjson.OPT_SERIALIZE_NUMPY)
 	if(compressed):
-		zbuf=zlib.compress(buf.encode("utf-8"), level=9)
+		zbuf=zlib.compress(buf, level=9)
 		return zbuf
 	else:
 		return buf
@@ -276,18 +276,19 @@ class KafkaSender(AlertSender):
 class ConfluentRESTSender(AlertSender):
 	def __init__(self, output_schema, url):
 		super().__init__(output_schema)
+		self.schema = json.dumps(self.schema)
 		self.url = url
 	
 	def send(self, data: dict, test: bool=False):
 		raw_body = {"value_schema": self.schema,
 		            "records": [{"value": data}],
 		            }
-		request_body = write_json(raw_body, compressed=True)
+		request_body = write_json(raw_body, compressed=False)
 		
-		additional_headers = {"Content-Type": "application/vnd.kafka.json.v2+json",
-		                      "Content-Encoding": "gzip",
+		additional_headers = {"Content-Type": "application/vnd.kafka.avro.v2+json",
+		                      #"Content-Encoding": "gzip",
 		                      }
-		resp = requests.post(url, data=request_body, headers=additional_headers)
+		resp = requests.post(self.url, data=request_body, headers=additional_headers)
 		if resp.status_code != 200:
 			logging.error(f"POST to Confluent REST Proxy failed ({resp.status_code}): "
 			              f"{resp.content}")
