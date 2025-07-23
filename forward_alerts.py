@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 
 import argparse
+from astropy.coordinates import SkyCoord
 from astropy.io import fits
 import astropy.table
+import astropy.units
+import astropy_healpix.healpy
 import copy
 import datetime
 import fastavro
+import gzip
+import hashlib
 import hop
 from io import BytesIO
 import json
@@ -13,12 +18,14 @@ import logging
 import math
 import numpy
 import orjson
+import os
 import requests
 import sys
 import yaml
 import zlib
 
 logger = logging.getLogger("ToO Alert Producer")
+use_file_cache = False
 
 def load_yaml_config(file_path, config):
 	"""Load settings from file_path and merge into config"""
@@ -206,6 +213,31 @@ def write_json(records, compressed: bool=False):
 		return buf
 
 
+def fetch_file(url: str, use_cache: bool = False):
+	if use_cache:
+		h = hashlib.sha256()
+		h.update(url.encode("utf-8"))
+		nh = h.hexdigest()
+		try:
+			with open(f"file_cache/{nh}", "rb") as f:
+				logger.info(f"Reading cached data from {url} from file_cache/{nh}")
+				return f.read()
+		except FileNotFoundError:
+			pass
+	logger.info(f"Requesting {url}")
+	resp = requests.get(url)
+	if resp.status_code != 200:
+		raise RuntimeError(f"HTTP GET of {url} failed ({resp.status_code}): {resp.content}")
+	if use_cache:
+		try:
+			os.stat("file_cache")
+		except FileNotFoundError:
+			os.mkdir("file_cache")
+		with open(f"file_cache/{nh}", "wb") as f:
+			f.write(resp.content)
+	return resp.content
+
+
 # not actually a class, just a wrapper function for working the annoying hop.io.Stream middleman
 def KafkaConsumer(url: str, *args, **kwargs):
 	return hop.io.Stream().open(url, mode='r', *args, **kwargs)
@@ -226,8 +258,13 @@ class FileConsumer:
 		counter = 0
 		for filepath in self.paths:
 			logger.info("Reading input from %s", filepath)
-			# currently we assume that all input files are Avro
-			msg = hop.models.AvroBlob.load_file(filepath)
+			fileext = os.path.splitext(filepath)[1]
+			format = fileext.upper()[1:]
+			if format in hop.io.Deserializer.__members__:
+				msg = hop.io.Deserializer[format].load_file(filepath)
+			else:
+				logging.warning(f"Message format {format} not recognized; returning a Blob")
+				msg = hop.models.Blob.load_file(filepath)
 			if metadata:
 				m = hop.io.Metadata(topic="all", partition=0, offset=counter, timestamp=0, key=b"", 
 				                    headers=[], _raw=None)
@@ -340,7 +377,7 @@ class AlertFilter:
 			message: The decoded message object
 			metadata: Transport metadata for the message
 		Return: A 2-tuple of the event identifier and any associated metadata which may be needed to
-		        determine whether another alert with the same identifier supersede the one(s)
+		        determine whether another alert with the same identifier supersedes the one(s)
 		        previously seen. The latter may be or include something a message maturity/lifecycle
 		         type code, e.g. "preliminary", "normal", "retraction", etc., an alert version
 		         number, or an alert time.
@@ -562,13 +599,127 @@ class LVKAlertFilter(AlertFilter):
 		        }
 
 
+# This filter should be applicable to other neutrino observatories using the same schema, 
+# maybe rename.
+class IceCubeAlertFilter(AlertFilter):
+	def __init__(self, history: dict, sender: AlertSender, allow_tests: bool):
+		super().__init__(history, sender, allow_tests)
+	
+	def is_test(self, message, metadata):
+		if super().is_test(message, metadata):
+			return True
+		return message["alert_tense"] == "test"
+	
+	def alert_identifier(self, message, metadata):
+		# TODO: The GCN schema allows for a list of IDs, which can make things tricky. 
+		#       For now, we hope that the list contains only one item.
+		return message["id"][0], \
+		       {"type": message["alert_type"], "time": message["alert_datetime"]}
+	
+	def overrides_previous(self, old_meta, new_meta):
+		# Retractions override previous alerts.
+		# If there were an interest in handling updates, etc., logic should be added here.
+		return new_meta["type"] == "retraction"
+	
+	def should_follow_up(self, message, metadata):
+		# TODO: should "injection" and "commanded" also be ignored?
+		if message["alert_tense"] in ["archival", "planned"]:
+			return False, {}
+		# It takes some time for IceCube events to be reconstructed with systematics, so the maps
+		# which include this are expected to go out with later 'update' alerts.
+		if not (message["alert_type"] == "update" and message["systematic_included"]):
+			return False, {}
+		
+		# Requirements:
+		# - "Latency to first Rubin exposure: <24 hours to observation"
+		#   This can only be evaluated by the scheduler
+		# - "P astro: >50%"
+		# - "Localization: >70% of reported contour (including sys unc) covered by a single Rubin
+		#   pointing"
+		#   This should be seriously evaluated by the scheduler, but we can make a conservative,
+		#   approximate cut here
+		# - "Galactic Latitude: >10 degrees"
+		# - "Neutrino in Rubin Footprint"
+		#   This appears redundant with the scheduler evaluating whether the localization can be
+		#   acceptably contained within a feasible exposure
+		# - "ToOs should not be performed if an alert is retracted"
+		#   We are not curently ready to implement this
+		
+		if message["p_astro"] < 0.5:
+			return False, {}
+		
+		pos = astropy.coordinates.ICRS(ra=message["ra"]*astropy.units.deg,
+		                               dec=message["dec"]*astropy.units.deg)
+		pos_gal = pos.transform_to(astropy.coordinates.Galactic())
+		if pos_gal.b.deg <= 10:
+			return False, {}
+		
+		# get skymap via separate HTTP
+		compressed_skymap_data = fetch_file(message["healpix_url"], use_file_cache)
+		t = astropy.table.Table.read(BytesIO(gzip.decompress(compressed_skymap_data)))
+		ordering = t.meta.get("ORDERING").upper()
+		
+		map_data = t["PROB"]
+		# make sure the map pixel data is a one-dimensional array
+		map_data=map_data.reshape((numpy.prod(map_data.shape),))
+		nside=int(math.sqrt(len(map_data)/12))
+		order = int(math.log2(nside))
+		pixel_area = math.pi/(3<<(order<<1))
+		if nside*nside*12 != len(map_data):
+			raise RuntimeError(f"Invalid number of map pixels: {len(map_data)}")
+		# Convert a flat skymap of probabilities to set of non-trivial UNIQ pixels with values
+		# of probability/area, dropping pixels which are NaN or less than epsilon along the way.
+		pixel_epsilon = 1e-16
+		if ordering=="RING":
+			base = 4<<(2*order)
+			mask = map_data > pixel_epsilon
+			useful_pixels = map_data[mask]/pixel_area
+			indices = mask.nonzero()[0]
+			skymap = Skymap(useful_pixels, base+astropy_healpix.healpy.ring2nest(nside, indices))
+		elif ordering=="NEST":
+			base = len(map_data)//3
+			mask = map_data > pixel_epsilon
+			useful_pixels = map_data[mask]/pixel_area
+			indices = mask.nonzero()[0]
+			skymap = Skymap(useful_pixels, indices)
+		else:
+			raise RuntimeError(f"Unexpected healpix ordering: {ordering}")
+		
+		prob_area = skymap.area_for_probability(0.7)
+		logger.info(f"Neutrino alert with 70% probability area of {prob_area} sr")
+		
+		# If the area for 70% of the probability is greater than the camera field of view, 
+		# there is no single exposure which can capture it. 
+		# This does not, however, rule out cases in which the area is smaller than the field of
+		# view, but distributed in such a way that it cannot be fit inside the shape of the field
+		# of view. 
+		if prob_area > 0.002924:
+			return False, {}
+		
+		result_data = {"skymap": skymap, "70%_area": prob_area, "type": "neutrino"}
+		logger.info(f"Neutrino alert meets criteria for {result_data['type']} lensed BNS merger")
+		
+		return True, result_data
+	
+	def generate_scheduling_data(self, message, metadata, alert_data):
+		target_order = 5
+		flat_map = alert_data["skymap"].make_flat_binary_map(0.7, target_order)
+		return {"instrument": message["mission"],
+		        "alert_type": alert_data["type"],
+		        "event_trigger_timestamp": message["alert_datetime"],
+		        "reward_map": flat_map,
+		        "reward_map_nside": 1<<target_order,
+		        }
+
+
 input_constructors = {
 	"files": FileConsumer,
 	"kafka": KafkaConsumer,
 }
 
 filter_constructors = {
-	"lvk_gw": LVKAlertFilter
+	"lvk_gw": LVKAlertFilter,
+	"icecube_nu": IceCubeAlertFilter,
 }
 
 output_constructors = {
@@ -576,6 +727,19 @@ output_constructors = {
 	"kafka": KafkaSender,
 	"confluent_rest": ConfluentRESTSender,
 }
+
+def get_message_contents(message):
+	# Blobs, JSON, and Avro messages contain their payloads in a member named 'content'
+	if hasattr(message, "content"):
+		# Avro messages have a 'single_record' member indicating whether their content is logically
+		# a single item (which might be a list), or a list of distinct records.
+		# Other message types are inherently single records, and have no explicit attribute.
+		if getattr(message, "single_record", True):
+			return [message.content]
+		else:
+			return message.content
+	else:
+		return [message]
 
 if __name__ == "__main__":
 	logging.basicConfig(level=logging.INFO) # TODO: make configurable
@@ -590,11 +754,14 @@ if __name__ == "__main__":
 	parser.add_argument("--input-options", type=json.loads, default={}, 
 						help="settings for the input consumer")
 	parser.add_argument("--filters", type=json.loads, default={}, 
-						help="mapping of topic names to filter types")
+						help="mapping of topic names to filter types; supported filter names are: "
+						f"{list(filter_constructors.keys())}")
 	parser.add_argument("--output-type", type=str, choices=output_constructors.keys(), default="stdout",
 						help="the mechanism to use for sending passing alert data")
 	parser.add_argument("--output-options", type=json.loads, default={}, 
 						help="settings for the output sender")
+	parser.add_argument("--use-file-cache", action="store_true", default=False, 
+						help="Write files fetched via HTTP to a local cache, and read them from the cache if available")
 	parser.add_argument("input_files", nargs='*', help="files to be read with the file consumer")
 
 	config = parser.parse_args()
@@ -605,6 +772,8 @@ if __name__ == "__main__":
 	if config.output_type not in output_constructors:
 		logger.fatal(f"Unrecognized output type: {config.output_type}")
 		exit(1)
+	
+	use_file_cache = config.use_file_cache
 
 	with open("output_schema.json") as schema_file:
 		output_schema = json.load(schema_file)
@@ -629,13 +798,12 @@ if __name__ == "__main__":
 		filters[topic] = filter_constructors[filter](history, sender, allow_tests=config.allow_tests)
 
 	for message, metadata in consumer.read(metadata=True, autocommit=False):
-		# TODO: this structure assumes that all messages are avro, and should be generalized
-		for record in (message.content if not message.single_record else [message.content]):
-			if metadata.topic not in filters:
-				logger.error(f"Message metadata claims it is from unexpected topic '{metadata.topic}'")
-				continue
+		if metadata.topic not in filters:
+			logger.error(f"Message metadata claims it is from unexpected topic '{metadata.topic}'")
+			continue
+		for record in get_message_contents(message):
 			try:
 				filters[metadata.topic].process(record, metadata)
 				consumer.mark_done(metadata)
 			except Exception as e:
-				logger.error(f"Error processing alert: {e}\nDropping and continuing with next")
+				logger.error(f"Error processing alert: {repr(e)}\nDropping and continuing with next")
