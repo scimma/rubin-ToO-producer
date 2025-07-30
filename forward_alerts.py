@@ -706,7 +706,7 @@ class IceCubeAlertFilter(AlertFilter):
 		flat_map = alert_data["skymap"].make_flat_binary_map(0.7, target_order)
 		return {"instrument": message["mission"],
 		        "alert_type": alert_data["type"],
-		        "event_trigger_timestamp": message["alert_datetime"],
+		        "event_trigger_timestamp": message["trigger_time"],
 		        "reward_map": flat_map,
 		        "reward_map_nside": 1<<target_order,
 		        }
