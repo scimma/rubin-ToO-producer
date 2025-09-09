@@ -659,31 +659,34 @@ class IceCubeAlertFilter(AlertFilter):
 		t = astropy.table.Table.read(BytesIO(gzip.decompress(compressed_skymap_data)))
 		ordering = t.meta.get("ORDERING").upper()
 		
-		map_data = t["PROB"]
-		# make sure the map pixel data is a one-dimensional array
-		map_data=map_data.reshape((numpy.prod(map_data.shape),))
-		nside=int(math.sqrt(len(map_data)/12))
-		order = int(math.log2(nside))
-		pixel_area = math.pi/(3<<(order<<1))
-		if nside*nside*12 != len(map_data):
-			raise RuntimeError(f"Invalid number of map pixels: {len(map_data)}")
-		# Convert a flat skymap of probabilities to set of non-trivial UNIQ pixels with values
-		# of probability/area, dropping pixels which are NaN or less than epsilon along the way.
-		pixel_epsilon = 1e-16
-		if ordering=="RING":
-			base = 4<<(2*order)
-			mask = map_data > pixel_epsilon
-			useful_pixels = map_data[mask]/pixel_area
-			indices = mask.nonzero()[0]
-			skymap = Skymap(useful_pixels, base+astropy_healpix.healpy.ring2nest(nside, indices))
-		elif ordering=="NEST":
-			base = len(map_data)//3
-			mask = map_data > pixel_epsilon
-			useful_pixels = map_data[mask]/pixel_area
-			indices = mask.nonzero()[0]
-			skymap = Skymap(useful_pixels, indices)
+		if ordering == "NUNIQ":
+			skymap = Skymap(t["PROBDENSITY"], t["UNIQ"])
 		else:
-			raise RuntimeError(f"Unexpected healpix ordering: {ordering}")
+			# Convert a flat skymap of probabilities to set of non-trivial UNIQ pixels with values
+			# of probability/area, dropping pixels which are NaN or less than epsilon along the way.
+			map_data = t["PROB"]
+			# make sure the map pixel data is a one-dimensional array
+			map_data=map_data.reshape((numpy.prod(map_data.shape),))
+			nside=int(math.sqrt(len(map_data)/12))
+			order = int(math.log2(nside))
+			pixel_area = math.pi/(3<<(order<<1))
+			if nside*nside*12 != len(map_data):
+				raise RuntimeError(f"Invalid number of map pixels: {len(map_data)}")
+			pixel_epsilon = 1e-16
+			if ordering=="RING":
+				base = 4<<(2*order)
+				mask = map_data > pixel_epsilon
+				useful_pixels = map_data[mask]/pixel_area
+				indices = mask.nonzero()[0]
+				skymap = Skymap(useful_pixels, base+astropy_healpix.healpy.ring2nest(nside, indices))
+			elif ordering=="NEST":
+				base = len(map_data)//3
+				mask = map_data > pixel_epsilon
+				useful_pixels = map_data[mask]/pixel_area
+				indices = mask.nonzero()[0]
+				skymap = Skymap(useful_pixels, indices)
+			else:
+				raise RuntimeError(f"Unexpected healpix ordering: {ordering}")
 		
 		prob_area = skymap.area_for_probability(0.7)
 		logger.info(f"Neutrino alert with 70% probability area of {prob_area} sr")
