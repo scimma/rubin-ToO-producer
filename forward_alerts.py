@@ -684,7 +684,7 @@ class IceCubeAlertFilter(AlertFilter):
 				mask = map_data > pixel_epsilon
 				useful_pixels = map_data[mask]/pixel_area
 				indices = mask.nonzero()[0]
-				skymap = Skymap(useful_pixels, indices)
+				skymap = Skymap(useful_pixels, base+indices)
 			else:
 				raise RuntimeError(f"Unexpected healpix ordering: {ordering}")
 		
