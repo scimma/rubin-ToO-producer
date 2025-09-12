@@ -608,7 +608,7 @@ class IceCubeAlertFilter(AlertFilter):
 	def is_test(self, message, metadata):
 		if super().is_test(message, metadata):
 			return True
-		return message["alert_tense"] == "test"
+		return message["alert_tense"] == "test" or message["alert_tense"] == "injection"
 	
 	def alert_identifier(self, message, metadata):
 		# TODO: The GCN schema allows for a list of IDs, which can make things tricky. 
@@ -622,7 +622,6 @@ class IceCubeAlertFilter(AlertFilter):
 		return new_meta["type"] == "retraction"
 	
 	def should_follow_up(self, message, metadata):
-		# TODO: should "injection" and "commanded" also be ignored?
 		if message["alert_tense"] in ["archival", "planned"]:
 			return False, {}
 		# It takes some time for IceCube events to be reconstructed with systematics, so the maps
