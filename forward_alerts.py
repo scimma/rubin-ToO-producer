@@ -452,6 +452,11 @@ class AlertFilter:
 			self.history[alert_id] = id_meta
 		
 		scheduling_data = self.generate_scheduling_data(message, metadata, alert_data)
+		# Temporary hack: pad or truncate the instrument list to a length of exactly 3
+		while len(scheduling_data["instrument"]) < 3:
+			scheduling_data["instrument"].append("")
+		while len(scheduling_data["instrument"]) > 3:
+			scheduling_data["instrument"].pop()
 		scheduling_data["source"] = alert_id
 		scheduling_data["is_test"] = is_test
 		scheduling_data["is_update"] = is_update
