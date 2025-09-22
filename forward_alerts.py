@@ -481,7 +481,7 @@ class LVKAlertFilter(AlertFilter):
 		else:
 			t = message["time_created"]
 		return message["superevent_id"], \
-		       {"type": message["alert_type"], "time": t}
+		       {"type": message["alert_type"].upper(), "time": t}
 	
 	def overrides_previous(self, old_meta, new_meta):
 		# Retractions override previous alerts.
@@ -489,7 +489,8 @@ class LVKAlertFilter(AlertFilter):
 		return old_meta["type"] == "INITIAL" and new_meta["type"] == "RETRACTION"
 	
 	def should_follow_up(self, message, metadata):
-		if message["alert_type"] != "INITIAL":
+		alert_type = message["alert_type"].upper()
+		if alert_type != "INITIAL":
 			return False, {}
 	
 		raw_map=astropy.table.Table.read(BytesIO(message["event"]["skymap"]))
@@ -516,7 +517,7 @@ class LVKAlertFilter(AlertFilter):
 		# Further categorization:
 		# - Gold: 90% area < 100 square degrees (0.030461 sr)
 		# - Silver: 90% area < 500 square degrees (0.152308 sr)
-		if message["alert_type"] == "INITIAL" and \
+		if alert_type == "INITIAL" and \
 		  (message["event"]["classification"]["BNS"] + 
 		   message["event"]["classification"]["NSBH"]) >= 0.9 and \
 		  message["event"]["far"] < 3.17e-08 and \
@@ -534,7 +535,7 @@ class LVKAlertFilter(AlertFilter):
 		# - False alarm rate requirement?
 		# - 90% area > 1000 square degrees (0.304617 sr)
 		# - Remnant requirement?
-		if message["alert_type"] == "INITIAL" and \
+		if alert_type == "INITIAL" and \
 		  (message["event"]["classification"]["BNS"] + 
 		   message["event"]["classification"]["NSBH"]) >= 0.9 and \
 		   prob_area >= 0.304617:
@@ -556,7 +557,7 @@ class LVKAlertFilter(AlertFilter):
 		# Further categorization:
 		# - Gold: 90% area < 15 square degrees (4.569261e-3 sr)
 		# - Silver: 90% area < 900 square degrees (0.2741556 sr)
-		if message["alert_type"] == "INITIAL" and \
+		if alert_type == "INITIAL" and \
 		  message["event"]["properties"]["HasMassGap"] >= 0.9 and \
 		  message["event"]["classification"]["NSBH"] < 0.1 and \
 		  message["event"]["far"] < 3.17e-8 and \
@@ -580,7 +581,7 @@ class LVKAlertFilter(AlertFilter):
 		# - Gold: 90% area < 100 square degrees (0.030461 sr)
 		# - Silver: 90% area < 500 square degrees (0.152308 sr)
 		if not passes and \
-		   message["alert_type"] == "INITIAL" and \
+		   alert_type == "INITIAL" and \
 		   prob_area < 0.152308:
 			result_data["type"] = "GW_case_C" if prob_area < 4.569261e-3 else "GW_case_E"
 			logger.warning("Alert might pass Unidentified Source conditions for type "
