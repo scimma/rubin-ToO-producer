@@ -706,7 +706,7 @@ class IceCubeAlertFilter(AlertFilter):
 	def generate_scheduling_data(self, message, metadata, alert_data):
 		target_order = 5
 		flat_map = alert_data["skymap"].make_flat_binary_map(0.7, target_order)
-		return {"instrument": message["mission"],
+		return {"instrument": [message["mission"]],
 		        "alert_type": alert_data["type"],
 		        "event_trigger_timestamp": message["trigger_time"],
 		        "reward_map": flat_map,
