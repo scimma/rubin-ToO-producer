@@ -656,7 +656,7 @@ class IceCubeAlertFilter(AlertFilter):
 		pos = astropy.coordinates.ICRS(ra=message["ra"]*astropy.units.deg,
 		                               dec=message["dec"]*astropy.units.deg)
 		pos_gal = pos.transform_to(astropy.coordinates.Galactic())
-		if pos_gal.b.deg <= 10:
+		if abs(pos_gal.b.deg) <= 10:
 			return False, {}
 		
 		# get skymap via separate HTTP
