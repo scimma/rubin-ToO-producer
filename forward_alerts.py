@@ -5,7 +5,7 @@ from astropy.coordinates import SkyCoord
 from astropy.io import fits
 import astropy.table
 import astropy.units
-import astropy_healpix.healpy
+from astropy_healpix import boundaries_lonlat, healpy
 import copy
 import datetime
 import fastavro
@@ -129,18 +129,37 @@ class Skymap:
 		"""
 		Compute the area on the sky subtended by the highest density portion of the map which
 		sums to the target probability.
+		
+		Return: The sky area, and the minimum declination, in radians, touched by that area
 		"""
 		summed_prob=KahanAdder()
 		summed_area=KahanAdder()
+		n_indices = {}
 		for p_dens, u_idx in self.data:
 			order=math.floor(math.log2(u_idx/4)/2)
 			area = self.pixel_areas[order]
 			prob=p_dens * area
 			summed_prob+=prob
 			summed_area+=area
+			n_idx = u_idx - (4<<(2*order))
+			if 1<<order not in n_indices:
+				n_indices[1<<order] = [n_idx]
+			else:
+				n_indices[1<<order].append(n_idx)
 			if summed_prob >= target_probability:
 				break
-		return summed_area.sum
+		# Each call to boundaries_lonlat and fixing its output to be a usable form is very slow.
+		# This can be worked around by having it process an array of pixels, b ut it cannot handle
+		# more than one value of 'nside' at a time, so it must be called once for each order of
+		# pixels to be checked.
+		min_dec = 100
+		for nside in n_indices.keys():
+			# extract the declinations (latitudes) of all pixel corners, in radians
+			corner_decs = boundaries_lonlat(n_indices[nside], 1, nside, "nested")[1].to_value().flatten()
+			min_corner_dec = numpy.min(corner_decs)
+			if min_corner_dec < min_dec:
+				min_dec = min_corner_dec
+		return summed_area.sum, min_dec
 	
 	def make_flat_map(self):
 		# first, figure out how many pixels it must be from its order, which must be the maximum
@@ -501,10 +520,14 @@ class LVKAlertFilter(AlertFilter):
 		raw_map=astropy.table.Table.read(BytesIO(message["event"]["skymap"]))
 		skymap = Skymap(raw_map["PROBDENSITY"], raw_map["UNIQ"])
 		mean_dist = raw_map.meta.get("DISTMEAN", -1.0)
-		prob_area = skymap.area_for_probability(0.9)
+		prob_area, min_dec = skymap.area_for_probability(0.9)
 		
 		logger.info(f"LVK alert with 90% probability area of {prob_area} sr")
 		logger.info(f"    Mean distance: {mean_dist} Mpc")
+		logger.info(f"    Minimum declination: {min_dec} radians")
+		
+		if min_dec > 0.523598: # standard 30 degree visibility cut
+			return False, {}
 		
 		result_data = {"skymap": skymap, "90%_area": prob_area}
 		passes = False
@@ -683,7 +706,7 @@ class IceCubeAlertFilter(AlertFilter):
 				mask = map_data > pixel_epsilon
 				useful_pixels = map_data[mask]/pixel_area
 				indices = mask.nonzero()[0]
-				skymap = Skymap(useful_pixels, base+astropy_healpix.healpy.ring2nest(nside, indices))
+				skymap = Skymap(useful_pixels, base+healpy.ring2nest(nside, indices))
 			elif ordering=="NEST":
 				base = len(map_data)//3
 				mask = map_data > pixel_epsilon
@@ -693,8 +716,12 @@ class IceCubeAlertFilter(AlertFilter):
 			else:
 				raise RuntimeError(f"Unexpected healpix ordering: {ordering}")
 		
-		prob_area = skymap.area_for_probability(0.7)
-		logger.info(f"Neutrino alert with 70% probability area of {prob_area} sr")
+		prob_area, min_dec = skymap.area_for_probability(0.7)
+		logger.info(f"Neutrino alert with 70% probability area of {prob_area} sr, "
+		            f"minimum declination: {min_dec} radians")
+		
+		if min_dec > 0.523598: # standard 30 degree visibility cut
+			return False, {}
 		
 		# If the area for 70% of the probability is greater than the camera field of view, 
 		# there is no single exposure which can capture it. 
