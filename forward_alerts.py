@@ -21,11 +21,13 @@ import orjson
 import os
 import requests
 import sys
+from typing import Mapping, Sequence
 import yaml
 import zlib
 
 logger = logging.getLogger("ToO Alert Producer")
 use_file_cache = False
+treat_cache_miss_as_not_found = False
 
 def load_yaml_config(file_path, config):
 	"""Load settings from file_path and merge into config"""
@@ -242,6 +244,8 @@ def fetch_file(url: str, use_cache: bool = False):
 				logger.info(f"Reading cached data from {url} from file_cache/{nh}")
 				return f.read()
 		except FileNotFoundError:
+			if treat_cache_miss_as_not_found:
+				raise RuntimeError(f"Treating {url} as not found due to lack of cache entry file_cache/{nh}")
 			pass
 	logger.info(f"Requesting {url}")
 	resp = requests.get(url)
@@ -511,6 +515,58 @@ class LVKAlertFilter(AlertFilter):
 		# Retractions override previous alerts.
 		# If there were an interest in handling updates, etc., logic should be added here.
 		return old_meta["type"] == "INITIAL" and new_meta["type"] == "RETRACTION"
+
+	def get_chirp_mass_estimate(self, message, metadata):
+		"""Return: a tuple of mass bin egdes and bin probabilities, or None if no suitable data
+		           could be downloaded.
+		"""
+		no_mass_data = None
+		mass_url = "https://gracedb.ligo.org/api/superevents/" \
+		           f"{self.alert_identifier(message,metadata)[0]}/files/mchirp_source.json"
+		try:
+			raw_mass_data = fetch_file(mass_url, use_file_cache)
+		except Exception as ex:
+			logger.warning(f"Failed to fetch mass data from {mass_url}: {ex}")
+			return no_mass_data
+		try:
+			mass_data = json.loads(raw_mass_data)
+		except Exception as ex:
+			logger.warning(f"Data fetched from {mass_url} cannot be decoded as JSON: {ex}")
+			return no_mass_data
+		if not isinstance(mass_data, Mapping):
+			logger.warning(f"Data fetched from {mass_url} is not a JSON mapping")
+			return no_mass_data
+		if "bin_edges" not in mass_data or "probabilities" not in mass_data:
+			logger.warning(f"Data fetched from {mass_url} does not have both bin_edges and "
+			               "probabilities keys")
+			return no_mass_data
+		if not isinstance(mass_data["bin_edges"], Sequence) or \
+		  not isinstance(mass_data["probabilities"], Sequence):
+			logger.warning(f"Data fetched from {mass_url} does not have sequences for both "
+			               "bin_edges and probabilities")
+			return no_mass_data
+		if len(mass_data["bin_edges"]) != 1 + len(mass_data["probabilities"]):
+			logger.warning(f"Data fetched from {mass_url} does not have compatible lengths for "
+			               "bin_edges and probabilities")
+			return no_mass_data
+		return mass_data["bin_edges"], mass_data["probabilities"]
+
+	def prob_fraction_above(self, mass_data, mass_threshold):
+		"""Sum the probability in all bins of the mass data distrbution above the specified mass.
+		Currently assumes that mass_threshold is equal to one of the bin edges, and will
+		underestimate if it is not.
+		Returns zero if the mass estimate data is not populated.
+		"""
+		if mass_data is None:
+			return 0
+		adder = KahanAdder() # overkill, but why not
+		for lower_edge, probability in zip(mass_data[0], mass_data[1]):
+			if lower_edge < mass_threshold:
+				continue
+			adder += probability
+		logger.info(f"  Probability above {mass_threshold} M☉: {float(adder)}")
+		return float(adder)
+
 	
 	def should_follow_up(self, message, metadata):
 		alert_type = message["alert_type"].upper()
@@ -521,6 +577,7 @@ class LVKAlertFilter(AlertFilter):
 		skymap = Skymap(raw_map["PROBDENSITY"], raw_map["UNIQ"])
 		mean_dist = raw_map.meta.get("DISTMEAN", -1.0)
 		prob_area, min_dec = skymap.area_for_probability(0.9)
+		mass_data = self.get_chirp_mass_estimate(message, metadata)
 		
 		logger.info(f"LVK alert with 90% probability area of {prob_area} sr")
 		logger.info(f"    Mean distance: {mean_dist} Mpc")
@@ -594,15 +651,20 @@ class LVKAlertFilter(AlertFilter):
 			result_data["type"] = "lensed_BNS_case_B" if prob_area < 4.569261e-3 else "lensed_BNS_case_A"
 			logger.info(f"LVK alert meets criteria for {result_data['type']} lensed BNS merger")
 
-		# TODO: implement
 		# Black Hole-Black Hole Mergers
 		# Requirements:
-		# - "90% sky area less than 20 square degrees"
-		# - "distance <6 Gpc"
+		# - "90% sky area less than 20 square degrees" (6.092348e-3 sr)
+		# - "distance <6 Gpc" (6000 Mpc)
 		# - "total mass>50 M☉"
-		#	"Unless in O5 the LVK will release a flag for massive binaries, we will select 
-		#	events based on estimated mass as in
-		#	https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.124.251102"
+		# Binned mass data does not have a bin edge at 50 M☉, so we round to the nearest, 44 M☉, and
+		# interpret 'greater than' as 'has more than 80% probability of being greater than'
+		if alert_type == "INITIAL" and \
+		  prob_area < 6.092348e-3 and \
+		  mean_dist < 6e3 and \
+		  self.prob_fraction_above(mass_data, 44.0) > 0.8:
+			passes = True
+			result_data["type"] = "BBH_case_A"
+			logger.info(f"LVK alert meets criteria for {result_data['type']} binary black hole merger")
 		
 		# TODO: implement unidentified source alerts
 		# Further categorization:
@@ -809,6 +871,7 @@ if __name__ == "__main__":
 		exit(1)
 	
 	use_file_cache = config.use_file_cache
+	treat_cache_miss_as_not_found = config.treat_cache_miss_as_not_found
 
 	with open("output_schema.json") as schema_file:
 		output_schema = json.load(schema_file)
