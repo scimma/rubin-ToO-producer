@@ -869,6 +869,9 @@ if __name__ == "__main__":
 						help="settings for the output sender")
 	parser.add_argument("--use-file-cache", action="store_true", default=False, 
 						help="Write files fetched via HTTP to a local cache, and read them from the cache if available")
+	parser.add_argument("--treat-cache-miss-as-not-found", action="store_true", default=False,
+	                    help="When using the local file cache, treat the lack of a cache entry as "
+	                    "the file being inaccessible, making no HTTP request for it")
 	parser.add_argument("input_files", nargs='*', help="files to be read with the file consumer")
 
 	config = parser.parse_args()
