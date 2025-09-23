@@ -495,8 +495,12 @@ class AlertFilter:
 
 
 class LVKAlertFilter(AlertFilter):
-	def __init__(self, history: dict, sender: AlertSender, allow_tests: bool):
+	def __init__(self, history: dict, sender: AlertSender, allow_tests: bool=False,
+	             alert_type="INITIAL"):
 		super().__init__(history, sender, allow_tests)
+		self.allowed_alert_type = alert_type
+		if alert_type != "INITIAL":
+			logger.warning(f"LVKAlertFilter alert type is {alert_type}, not INITIAL")
 	
 	def is_test(self, message, metadata):
 		if super().is_test(message, metadata):
@@ -574,7 +578,7 @@ class LVKAlertFilter(AlertFilter):
 	
 	def should_follow_up(self, message, metadata):
 		alert_type = message["alert_type"].upper()
-		if alert_type != "INITIAL":
+		if alert_type != self.allowed_alert_type:
 			return False, {}
 	
 		raw_map=astropy.table.Table.read(BytesIO(message["event"]["skymap"]))
@@ -606,9 +610,8 @@ class LVKAlertFilter(AlertFilter):
 		# Further categorization:
 		# - Gold: 90% area < 100 square degrees (0.030461 sr)
 		# - Silver: 90% area < 500 square degrees (0.152308 sr)
-		if alert_type == "INITIAL" and \
-		  (message["event"]["classification"]["BNS"] + 
-		   message["event"]["classification"]["NSBH"]) >= 0.9 and \
+		if (message["event"]["classification"]["BNS"] + 
+		    message["event"]["classification"]["NSBH"]) >= 0.9 and \
 		  message["event"]["far"] < 3.17e-08 and \
 		  prob_area < 0.152308 and \
 		  message["event"]["properties"]["HasNS"] >= 0.5 and \
@@ -624,10 +627,9 @@ class LVKAlertFilter(AlertFilter):
 		# - False alarm rate requirement?
 		# - 90% area > 1000 square degrees (0.304617 sr)
 		# - Remnant requirement?
-		if alert_type == "INITIAL" and \
-		  (message["event"]["classification"]["BNS"] + 
-		   message["event"]["classification"]["NSBH"]) >= 0.9 and \
-		   prob_area >= 0.304617:
+		if (message["event"]["classification"]["BNS"] + 
+		    message["event"]["classification"]["NSBH"]) >= 0.9 and \
+		  prob_area >= 0.304617:
 			# this will be the type when full criteria for these events are certain
 			result_data["type"] = "GW_case_large"
 			logger.warning("Alert might pass Very Large Skymap conditions, "
@@ -646,8 +648,7 @@ class LVKAlertFilter(AlertFilter):
 		# Further categorization:
 		# - Gold: 90% area < 15 square degrees (4.569261e-3 sr)
 		# - Silver: 90% area < 900 square degrees (0.2741556 sr)
-		if alert_type == "INITIAL" and \
-		  message["event"]["properties"]["HasMassGap"] >= 0.9 and \
+		if message["event"]["properties"]["HasMassGap"] >= 0.9 and \
 		  message["event"]["classification"]["NSBH"] < 0.1 and \
 		  message["event"]["far"] < 3.17e-8 and \
 		  prob_area < 0.2741556:
@@ -675,7 +676,6 @@ class LVKAlertFilter(AlertFilter):
 		# - Gold: 90% area < 100 square degrees (0.030461 sr)
 		# - Silver: 90% area < 500 square degrees (0.152308 sr)
 		if not passes and \
-		   alert_type == "INITIAL" and \
 		   prob_area < 0.152308:
 			result_data["type"] = "GW_case_C" if prob_area < 4.569261e-3 else "GW_case_E"
 			logger.warning("Alert might pass Unidentified Source conditions for type "
@@ -697,8 +697,12 @@ class LVKAlertFilter(AlertFilter):
 # This filter should be applicable to other neutrino observatories using the same schema, 
 # maybe rename.
 class IceCubeAlertFilter(AlertFilter):
-	def __init__(self, history: dict, sender: AlertSender, allow_tests: bool):
+	def __init__(self, history: dict, sender: AlertSender, allow_tests: bool=False,
+	             alert_type="INITIAL"):
 		super().__init__(history, sender, allow_tests)
+		self.allowed_alert_type = alert_type
+		if alert_type != "update":
+			logger.warning(f"IceCubeAlertFilter alert type is {alert_type}, not update")
 	
 	def is_test(self, message, metadata):
 		if super().is_test(message, metadata):
@@ -721,7 +725,7 @@ class IceCubeAlertFilter(AlertFilter):
 			return False, {}
 		# It takes some time for IceCube events to be reconstructed with systematics, so the maps
 		# which include this are expected to go out with later 'update' alerts.
-		if not (message["alert_type"] == "update" and message["systematic_included"]):
+		if not (message["alert_type"] == self.allowed_alert_type and message["systematic_included"]):
 			return False, {}
 		
 		# Requirements:
@@ -895,9 +899,14 @@ if __name__ == "__main__":
 	consumer = input_constructors[config.input_type](**config.input_options)
 	sender = output_constructors[config.output_type](output_schema=output_schema, 
 	                                                 **config.output_options)
+	for filter in filter_constructors.keys():
+		settings = {"allow_tests": config.allow_tests}
+		if filter in config.filter_settings:
+			settings.update(config.filter_settings[filter])
+		config.filter_settings[filter] = settings
 	filters = {}
 	for topic, filter in config.filters.items():
-		filters[topic] = filter_constructors[filter](history, sender, allow_tests=config.allow_tests)
+		filters[topic] = filter_constructors[filter](history, sender, **config.filter_settings[filter])
 
 	for message, metadata in consumer.read(metadata=True, autocommit=False):
 		if metadata.topic not in filters:

@@ -35,6 +35,24 @@ An example configuration file might look like:
 	output-options:
 	  url: "http://localhost:8082/topics/topic3"
 
+Per-filter-type settings can also be specified via the `filter-settings` mapping, e.g.:
+
+	filter-settings:
+	  lvk_gw:
+	    alert_type: "PRELIMINARY"
+	  icecube_nu:
+	    alert_type: "update"
+
+The currently supported per-filter setings are:
+
+#### lvk_gw
+- alert_type: The alert type value to process. The default (and recommended) value is "INITIAL".
+              Valid values are: "EARLYWARNING", "PRELIMINARY" ," INITIAL" , "UPDATE" , and "RETRACTION"
+
+#### icecube_nu:
+- alert_type: The alert type value to process. The default (and recommended) value is "update".
+              Valid values are: "initial", "subsequent", "update", and "retraction"
+
 ### Event Types
 
 The following set of labels is used in the output records to identify the various cases outlined in the recommednation paper:
