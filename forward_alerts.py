@@ -22,6 +22,7 @@ import os
 import requests
 import sys
 from typing import Mapping, Sequence
+from urllib.parse import urlparse
 import yaml
 import zlib
 
@@ -521,7 +522,10 @@ class LVKAlertFilter(AlertFilter):
 		           could be downloaded.
 		"""
 		no_mass_data = None
-		mass_url = "https://gracedb.ligo.org/api/superevents/" \
+		if "urls" not in message or "gracedb" not in message["urls"]:
+			return no_mass_data
+		parsed_gracedb_url = urlparse(message["urls"]["gracedb"])
+		mass_url = f"https://{parsed_gracedb_url.netloc}/api/superevents/" \
 		           f"{self.alert_identifier(message,metadata)[0]}/files/mchirp_source.json"
 		try:
 			raw_mass_data = fetch_file(mass_url, use_file_cache)
