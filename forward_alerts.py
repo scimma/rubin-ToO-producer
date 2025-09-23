@@ -861,6 +861,8 @@ if __name__ == "__main__":
 	parser.add_argument("--filters", type=json.loads, default={}, 
 						help="mapping of topic names to filter types; supported filter names are: "
 						f"{list(filter_constructors.keys())}")
+	parser.add_argument("--filter-settings", type=json.loads, default={}, 
+	                    help="mapping of filter types to dinstinct settings for each")
 	parser.add_argument("--output-type", type=str, choices=output_constructors.keys(), default="stdout",
 						help="the mechanism to use for sending passing alert data")
 	parser.add_argument("--output-options", type=json.loads, default={}, 
