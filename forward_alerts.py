@@ -663,8 +663,7 @@ class LVKAlertFilter(AlertFilter):
 		# - "total mass>50 M☉"
 		# Binned mass data does not have a bin edge at 50 M☉, so we round to the nearest, 44 M☉, and
 		# interpret 'greater than' as 'has more than 80% probability of being greater than'
-		if alert_type == "INITIAL" and \
-		  prob_area < 6.092348e-3 and \
+		if prob_area < 6.092348e-3 and \
 		  mean_dist < 6e3 and \
 		  self.prob_fraction_above(mass_data, 44.0) > 0.8:
 			passes = True
