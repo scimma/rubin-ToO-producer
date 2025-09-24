@@ -709,9 +709,9 @@ class IceCubeAlertFilter(AlertFilter):
 		return message["alert_tense"] == "test" or message["alert_tense"] == "injection"
 	
 	def alert_identifier(self, message, metadata):
-		# TODO: The GCN schema allows for a list of IDs, which can make things tricky. 
+		# TODO: The GCN schema allows for a list of names, which can make things tricky. 
 		#       For now, we hope that the list contains only one item.
-		return message["id"][0], \
+		return message["event_name"][0], \
 		       {"type": message["alert_type"], "time": message["alert_datetime"]}
 	
 	def overrides_previous(self, old_meta, new_meta):
