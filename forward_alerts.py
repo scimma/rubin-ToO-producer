@@ -919,6 +919,6 @@ if __name__ == "__main__":
 		for record in get_message_contents(message):
 			try:
 				filters[metadata.topic].process(record, metadata)
-				consumer.mark_done(metadata)
 			except Exception as e:
 				logger.error(f"Error processing alert: {repr(e)}\nDropping and continuing with next")
+		consumer.mark_done(metadata)
