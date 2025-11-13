@@ -72,6 +72,6 @@ The following set of labels is used in the output records to identify the variou
 	| neutrino and neutrino_u          	| Neutrino                                            	|
 	| SSO_night                        	| Small PHA                                           	|
 	| SSO_twilight                     	| Small PHA                                           	|
-	| GW_case_large                    	| Large GW skymaps                                    	|
+	| GW_large                       	| Large GW skymaps                                    	|
 	| Lensed_GRB                       	| Lensed GRB                                          	|
 	| SN_Galactic                      	| Galactic supernova                                  	|
