@@ -68,8 +68,8 @@ def test_Skymap_area_for_probability():
 	print(map_data["PROBDENSITY"])
 	print(map_data["UNIQ"])
 	skymap = Skymap(map_data["PROBDENSITY"], map_data["UNIQ"])
-	assert skymap.area_for_probability(0.9) >= 4.264e-3
-	assert skymap.area_for_probability(0.9) <= 4.264e-3 + (math.pi/180.)**2
+	assert skymap.area_for_probability(0.9)[0] >= 4.264e-3
+	assert skymap.area_for_probability(0.9)[0] <= 4.264e-3 + (math.pi/180.)**2
 	
 	raw = make_skymap(0.233946) # ~768 sq. deg.
 	map_data = astropy.table.Table.read(BytesIO(raw))
@@ -77,8 +77,8 @@ def test_Skymap_area_for_probability():
 	print(map_data["PROBDENSITY"])
 	print(map_data["UNIQ"])
 	skymap = Skymap(map_data["PROBDENSITY"], map_data["UNIQ"])
-	assert skymap.area_for_probability(0.9) >= 0.233946
-	assert skymap.area_for_probability(0.9) <= 0.233946 + (math.pi/180.)**2
+	assert skymap.area_for_probability(0.9)[0] >= 0.233946
+	assert skymap.area_for_probability(0.9)[0] <= 0.233946 + (math.pi/180.)**2
 
 def test_LVK_is_test():
 	filter = LVKAlertFilter({}, None, True)

@@ -631,6 +631,7 @@ class LVKAlertFilter(AlertFilter):
 		    message["event"]["classification"]["NSBH"]) >= 0.9 and \
 		  prob_area >= 0.304617:
 			# this will be the type when full criteria for these events are certain
+			passes = True
 			result_data["type"] = "GW_case_large"
 			logger.warning("Alert might pass Very Large Skymap conditions, "
 			               "but these are not definitely implemented")
