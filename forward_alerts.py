@@ -685,7 +685,7 @@ class LVKAlertFilter(AlertFilter):
 	
 	def generate_scheduling_data(self, message, metadata, alert_data):
 		target_order = 5
-		flat_map = alert_data["skymap"].make_flat_binary_map(0.9, target_order)
+		flat_map = alert_data["skymap"].make_flat_binary_map(0.8, target_order) # Updated to 0.8 for special event, need to rollback for future
 		return {"instrument": message["event"]["instruments"],
 		        "alert_type": alert_data["type"],
 		        "event_trigger_timestamp": message["event"]["time"],
