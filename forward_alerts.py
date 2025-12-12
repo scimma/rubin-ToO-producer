@@ -323,6 +323,19 @@ class StdoutSender(AlertSender):
 		sys.stdout.flush()
 
 
+class FileSender(AlertSender):
+	def __init__(self, output_schema, output_dir):
+		super().__init__(output_schema)
+		self.output_dir = output_dir
+	
+	def send(self, data: dict, test: bool=False):
+		if test:
+			print("*** TEST ALERT ***")
+		fname = f"{self.output_dir}/{data['source']}.json"
+		with open(fname, "wb") as f:
+			f.write(write_json(data, compressed=False))
+
+
 class KafkaSender(AlertSender):
 	def __init__(self, output_schema, url):
 		super().__init__(output_schema)
@@ -698,7 +711,7 @@ class LVKAlertFilter(AlertFilter):
 # maybe rename.
 class IceCubeAlertFilter(AlertFilter):
 	def __init__(self, history: dict, sender: AlertSender, allow_tests: bool=False,
-	             alert_type="INITIAL"):
+	             alert_type="initial"):
 		super().__init__(history, sender, allow_tests)
 		self.allowed_alert_type = alert_type
 		if alert_type != "update":
@@ -829,6 +842,7 @@ filter_constructors = {
 
 output_constructors = {
 	"stdout": StdoutSender,
+	"files": FileSender,
 	"kafka": KafkaSender,
 	"confluent_rest": ConfluentRESTSender,
 }
