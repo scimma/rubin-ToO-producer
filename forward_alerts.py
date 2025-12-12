@@ -6,7 +6,9 @@ from astropy.io import fits
 import astropy.table
 import astropy.units
 from astropy_healpix import boundaries_lonlat, healpy
+from astropy_healpix.core import healpix_cone_search
 import copy
+from dataclasses import dataclass
 import datetime
 import fastavro
 import gzip
@@ -830,6 +832,73 @@ class IceCubeAlertFilter(AlertFilter):
 		        }
 
 
+# this might or might not be replaced by a more general supernova filter
+class SuperKAlertFilter(AlertFilter):
+	def __init__(self, history: dict, sender: AlertSender, allow_tests: bool=False,
+	             alert_type="initial"):
+		super().__init__(history, sender, allow_tests)
+		self.allowed_alert_type = alert_type
+	
+	def is_test(self, message, metadata):
+		if super().is_test(message, metadata):
+			return True
+		return message["alert_tense"] == "test" or message["alert_tense"] == "injection"
+	
+	def alert_identifier(self, message, metadata):
+		# SuperK alerts do not appear to have event names, but do seem to have an id
+		# ids can be either a string or a list of strings
+		if isinstance(message["id"], str):
+			id = message["id"]
+		else:
+			id = message["id"][0]
+		return id, {"type": message["alert_type"], "time": message["alert_datetime"]}
+	
+	def overrides_previous(self, old_meta, new_meta):
+		# Retractions override previous alerts.
+		# If there were an interest in handling updates, etc., logic should be added here.
+		return new_meta["type"] == "retraction"
+	
+	def should_follow_up(self, message, metadata):
+		if message["alert_tense"] in ["archival", "planned"]:
+			return False, {}
+		# Criteria:
+		# - Search Area maximum 100 sq deg
+		
+		# For now, the only data we have a is a circular 68% region, so we use that
+		containment_radius = message["ra_dec_error"]
+		prob_area = math.pi*containment_radius*containment_radius
+		
+		if prob_area > 100.:
+			return False, {}
+		
+		return True, {}
+
+	def generate_scheduling_data(self, message, metadata, alert_data):
+		target_order = 5
+		flat_n_npixels=12<<(target_order<<1)
+		flat_map = numpy.zeros(flat_n_npixels, dtype=bool)
+		
+		# find the indices of all pixels touched by the localization circle
+		@dataclass
+		class Deg:
+			deg: float
+			def to_value(self, *ignored):
+				return self.deg
+		indices = healpix_cone_search(lon=Deg(message["ra"]), lat=Deg(message["dec"]),
+		                              radius=Deg(message["ra_dec_error"]),
+		                              nside=1<<target_order, order="nested")
+		# mark each touched pixel
+		for idx in indices:
+			flat_map[idx] = True
+		
+		return {"instrument": [message["mission"]],
+		        "alert_type": "SN_Galactic",
+		        "event_trigger_timestamp": message["trigger_time"],
+		        "reward_map": flat_map,
+		        "reward_map_nside": 1<<target_order,
+		        }
+
+
 input_constructors = {
 	"files": FileConsumer,
 	"kafka": KafkaConsumer,
@@ -838,6 +907,7 @@ input_constructors = {
 filter_constructors = {
 	"lvk_gw": LVKAlertFilter,
 	"icecube_nu": IceCubeAlertFilter,
+	"superk_sn": SuperKAlertFilter,
 }
 
 output_constructors = {
