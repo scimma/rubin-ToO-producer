@@ -266,7 +266,12 @@ def fetch_file(url: str, use_cache: bool = False):
 
 # not actually a class, just a wrapper function for working the annoying hop.io.Stream middleman
 def KafkaConsumer(url: str, *args, **kwargs):
-	return hop.io.Stream().open(url, mode='r', *args, **kwargs)
+	stream_kwargs = {}
+	stream_arg_names = ["auth", "start_at", "until_eos"]
+	for arg_name in stream_arg_names:
+		if arg_name in kwargs:
+			stream_kwargs[arg_name]=kwargs.pop(arg_name)
+	return hop.io.Stream(**stream_kwargs).open(url, mode='r', *args, **kwargs)
 
 
 class FileConsumer:
