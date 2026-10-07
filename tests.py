@@ -461,9 +461,21 @@ def test_LVK_should_follow_up_ssm(monkeypatch):
 	assert result
 	assert result_data["type"] == "SSM_Silver"
 	
-	# Bronze is not automated
+	# larger regions are trimmed to 500 deg^2, and are Silver
 	result, result_data = filter.should_follow_up(
 		lvk_alert(800., far=5e-9, search="SSM", classification={}, properties=SSM_PROPERTIES), None)
+	assert result
+	assert result_data["type"] == "SSM_Silver"
+	assert numpy.count_nonzero(result_data["reward_mask"])*PROB_MAP_PIXEL_AREA_DEG2 <= 500.
+	
+	# HasSSM must be at least 0.5
+	result, result_data = filter.should_follow_up(
+		lvk_alert(50., far=5e-9, search="SSM", classification={},
+		          properties=dict(SSM_PROPERTIES, HasSSM=0.5)), None)
+	assert result
+	result, result_data = filter.should_follow_up(
+		lvk_alert(50., far=5e-9, search="SSM", classification={},
+		          properties=dict(SSM_PROPERTIES, HasSSM=0.49)), None)
 	assert not result
 	
 	# must come from the SSM search
@@ -483,18 +495,16 @@ def test_LVK_should_follow_up_ssm(monkeypatch):
 		          properties=SSM_PROPERTIES), None)
 	assert not result
 	
-	# chirp mass can substitute for HasSSM, and SSM events are not treated as BNS/NSBH even when
+	# chirp mass cannot substitute for HasSSM, and SSM events are not treated as BNS/NSBH even when
 	# their chirp mass would pass the BNS/NSBH criteria
 	filter = lvk_filter(monkeypatch, mass_data({0.1: 0.95, 0.87: 0.05}))
 	result, result_data = filter.should_follow_up(
 		lvk_alert(50., far=5e-9, search="SSM", classification={},
 		          properties=dict(SSM_PROPERTIES, HasSSM=0.0)), None)
-	assert result
-	assert result_data["passed_types"] == ["SSM_Gold"]
-	result, result_data = filter.should_follow_up(
-		lvk_alert(800., far=5e-9, search="SSM", classification={},
-		          properties=dict(SSM_PROPERTIES, HasSSM=0.0)), None)
 	assert not result
+	result, result_data = filter.should_follow_up(
+		lvk_alert(50., far=5e-9, search="SSM", classification={}, properties=SSM_PROPERTIES), None)
+	assert result_data["passed_types"] == ["SSM_Gold"]
 
 def test_LVK_generate_scheduling_data():
 	filter = lvk_filter()

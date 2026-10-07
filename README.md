@@ -87,7 +87,7 @@ Labels marked as retired are no longer produced, but are kept here for reference
 	| GW_case_Bronze                   	| 2026 BNS/NSBH bronze: Omega_obs < 1500 deg², after trimming (§2.1.3)	|
 	| BBH                              	| 2026 BBH: 90% area < 100 deg² (§2.2.3)                            	|
 	| SSM_Gold                         	| 2026 sub-solar mass gold: Omega_obs < 100 deg² (§2.3.3)           	|
-	| SSM_Silver                       	| 2026 sub-solar mass silver: Omega_obs < 500 deg² (§2.3.3)         	|
+	| SSM_Silver                       	| 2026 sub-solar mass silver: Omega_obs < 500 deg², after trimming (§2.3.3)	|
 	| lensed_BNS_case_A                	| Lensed BNS, 900 deg² skymap (§5.1.3)                              	|
 	| lensed_BNS_case_B                	| Lensed BNS, 15 deg² skymap (§5.1.3)                               	|
 	| neutrino                         	| 2026 standard neutrino: p_astro > 0.4 (§3)                        	|
@@ -112,4 +112,4 @@ Omega_obs is the part of the 90% credible region which is observable from Rubin 
 When it is larger than a category's maximum area, only its highest-probability pixels within that area are kept. 
 Probabilities are not renormalised to the observable region. 
 For all GW categories the reward map is this (trimmed) Omega_obs region, as a binary map. 
-Sub-solar mass events with Omega_obs > 500 deg² (Bronze) are not triggered automatically.
+Sub-solar mass events require HasSSM >= 0.5 from the SSM search; Omega_obs larger than 500 deg² is trimmed to 500 deg² and issued as SSM_Silver.

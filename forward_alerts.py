@@ -82,8 +82,7 @@ BBH_OBS_FRAC_MIN = 0.70       # fraction of total probability in observable pixe
 # Sub-solar mass candidates (§2.3.3)
 SSM_SEARCH = "SSM"            # value of event.search for the SSM search pipeline(s)
 HASSSM_MIN = 0.5              # HasSSM >= 0.5
-MCHIRP_SSM_MAX = 0.87         # P(Mchirp < 0.87 Msun) >= 0.9
-SSM_MAX_AREA_DEG2 = 500.      # Omega_obs above this is Bronze-level, which is not automated
+SSM_MAX_AREA_DEG2 = 500.      # trim Omega_obs to at most this area
 SSM_GOLD_DEG2 = 100.          # Gold < 100 deg^2, Silver < 500 deg^2
 
 # Gravitationally lensed BNS mergers (§5.1.3)
@@ -1081,31 +1080,24 @@ class LVKAlertFilter(AlertFilter):
 		# Sub-solar mass candidates (§2.3.3)
 		# Requirements:
 		# - Event from the SSM search
-		# - HasSSM >= 0.5 or P(Mchirp < 0.87 M☉) >= 0.9
+		# - HasSSM >= 0.5
 		# - FAR < 1 per 3 years
-		# - Omega_obs no larger than 500 deg² (larger, Bronze, events are not automated and are left
-		#   to the ToO advisory board)
+		# - Omega_obs, the observable part of the 90% credible region, trimmed to its
+		#   highest-probability 500 deg² if larger
 		# - Probability in Omega_obs with |b| > 10 degrees greater than 0.10
 		# Further categorization by Omega_obs area:
 		# - Gold: < 100 deg²
 		# - Silver: < 500 deg²
 		if is_ssm_search and \
-		  (properties.get("HasSSM", 0.0) >= HASSSM_MIN or
-		   p_mchirp(0., MCHIRP_SSM_MAX) >= MCHIRP_PROB_MIN) and \
+		  properties.get("HasSSM", 0.0) >= HASSSM_MIN and \
 		  far < FAR_1_PER_3YR:
-			untrimmed_area = observable_credible_area(skymap, t0, GW_CRED, **self.obs_settings)
-			if untrimmed_area > SSM_MAX_AREA_DEG2:
-				logger.info(f"    SSM Omega_obs of {untrimmed_area:.1f} deg² is larger than "
-				            f"{SSM_MAX_AREA_DEG2} deg² (Bronze): not triggering automatically, "
-				            "left to the ToO advisory board")
-			else:
-				mask, area, obs_prob, high_b_prob = trim_to_observable(skymap, t0, SSM_MAX_AREA_DEG2,
-				                                                       GW_CRED, **self.obs_settings)
-				logger.info(f"    SSM Omega_obs: {area:.1f} deg², probability {obs_prob:.3f}, "
-				            f"probability with |b| > {GAL_LAT_CUT_DEG}°: {high_b_prob:.3f}")
-				if high_b_prob > HIGH_B_PROB_MIN:
-					accept("SSM_Gold" if area < SSM_GOLD_DEG2 else "SSM_Silver", mask,
-					       "sub-solar mass merger")
+			mask, area, obs_prob, high_b_prob = trim_to_observable(skymap, t0, SSM_MAX_AREA_DEG2,
+			                                                       GW_CRED, **self.obs_settings)
+			logger.info(f"    SSM Omega_obs: {area:.1f} deg², probability {obs_prob:.3f}, "
+			            f"probability with |b| > {GAL_LAT_CUT_DEG}°: {high_b_prob:.3f}")
+			if high_b_prob > HIGH_B_PROB_MIN:
+				accept("SSM_Gold" if area < SSM_GOLD_DEG2 else "SSM_Silver", mask,
+				       "sub-solar mass merger")
 		
 		passes = len(result_data["passed_types"]) > 0
 		if passes:
