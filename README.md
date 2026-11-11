@@ -40,7 +40,6 @@ Per-filter-type settings can also be specified via the `filter-settings` mapping
 	filter-settings:
 	  lvk_gw:
 	    alert_type: "PRELIMINARY"
-	    obs_min_alt_deg: 35
 	  icecube_nu:
 	    alert_type: "initial"
 	    enable_coincidence: true
@@ -50,20 +49,12 @@ The currently supported per-filter setings are:
 #### lvk_gw
 - alert_type: The alert type value to process. The default (and recommended) value is "INITIAL".
               Valid values are: "EARLYWARNING", "PRELIMINARY" ," INITIAL" , "UPDATE" , and "RETRACTION"
-- obs_window_h: The length, in hours from the event time, of the window in which a sky position must
-                be observable to count towards Omega_obs. The default is 24.
-- obs_sun_alt_max_deg: The maximum altitude of the Sun, in degrees, for a time to count as night.
-                       The default is -12.
-- obs_min_alt_deg: The minimum altitude, in degrees, at which a sky position counts as observable.
-                   The default is 30 (airmass 2).
 
 #### icecube_nu:
 - alert_type: The alert type value to process. The default (and recommended) value is "initial".
               Valid values are: "initial", "subsequent", "update", and "retraction".
               Alerts which do not include systematic uncertainties are only accepted when this is
               "initial".
-- obs_window_h, obs_sun_alt_max_deg, obs_min_alt_deg: Observability settings, as for lvk_gw, applied
-              to the localisation centroid.
 - enable_coincidence: Whether to look for coincidences with LVK BNS/NSBH alerts, producing
                       neutrino_coincident alerts. The default is false.
                       A neutrino arriving after a coincident LVK alert has passed is sent as
@@ -73,6 +64,32 @@ The currently supported per-filter setings are:
                       alert passes later a neutrino_coincident alert is sent for the neutrino: marked
                       as an update if a neutrino alert was already sent for it, or as a new alert if
                       it was too weak to be sent on its own. EHE neutrinos are not changed.
+
+#### Global settings
+
+Some settings apply to all filters, and are set at the top level of the configuration:
+
+- observability-settings: The definition of whether a position on the sky is observable from Rubin,
+                          used by all of the filters which need to know (for the observable part of
+                          the GW localisation, Omega_obs, and for the centroid of neutrino
+                          localisations). A mapping with any of these keys:
+  - window_h: The length, in hours from the event time, of the window in which a position must be
+              observable. The default is 24.
+  - sun_alt_max_deg: The maximum altitude of the Sun, in degrees, for a time to count as night.
+                     The default is -12.
+  - min_alt_deg: The minimum altitude, in degrees, at which a position counts as observable.
+                 The default is 30 (airmass 2).
+  - time_step_min: The interval, in minutes, at which times in the window are sampled.
+                   The default is 10.
+- history-max-age-days: How long, in days, alerts are remembered for the purpose of filtering
+                        duplicate alerts and recognizing retractions. Alerts are forgotten when they
+                        have not been seen for longer than this. The default is 7.
+
+For example:
+
+	observability-settings:
+	  min_alt_deg: 35
+	history-max-age-days: 14
 
 ### Event Types
 

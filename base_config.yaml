@@ -1,0 +1,40 @@
+# Ignore alerts marked by the sender(s) as tests
+allow-tests: True
+
+# Read alerts from Kafka topic
+input-type: "kafka"
+input-options:
+  url: "kafka://sean.macbride-1251e6a1@kafka.scimma.org/rubin-too-dev.lvk-test-alerts,rubin-too-dev.galactic_sn-test-alerts,rubin-too-dev.pha-test-alerts,rubin-too-dev.neutrino-test-alerts,igwn.gwalert-playground,SuperK.sn_alert_dev"
+
+# Output to EFD testing topic (base_efd)
+output-type: "confluent_rest"
+
+# What counts as observable from Rubin (used by all filters)
+observability-settings:
+  window_h: 24
+  sun_alt_max_deg: -12
+  min_alt_deg: 30
+
+# How long alerts are remembered for filtering duplicates
+history-max-age-days: 1
+
+# Filters
+treat_cache_miss_as_not_found: True
+filter-settings:
+  lvk_gw:
+    alert_type: "PRELIMINARY"
+  icecube_nu:
+    alert_type: "initial"
+    # Look for coincidences between neutrinos and LVK BNS/NSBH alerts. Not yet enabled.
+    enable_coincidence: False
+  superk_sn:
+    alert_type: "initial"
+
+filters:
+  igwn.gwalert-playground: lvk_gw
+  ligo-demo-partners: lvk_gw
+  rubin-too-dev.lvk-test-alerts: lvk_gw
+  rubin-too-dev.galactic_sn-test-alerts: superk_sn
+  rubin-too-dev.neutrino-test-alerts: icecube_nu
+  SuperK.sn_alert_dev: superk_sn
+#   rubin-too-dev.pha-test-alerts: TBD
