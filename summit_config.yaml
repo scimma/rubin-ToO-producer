@@ -1,0 +1,42 @@
+# Ignore alerts marked by the sender(s) as tests
+allow-tests: False # We may want this to be true, but have the scheduler be false. Worth discussion.
+
+# Read alerts from Kafka topic
+input-type: "kafka"
+input-options:
+  url: "kafka://sean.macbride-1251e6a1@kafka.scimma.org/rubin-too-dev.lvk-test-alerts,igwn.gwalert,rubin-too-dev.rubin-too-dev.neutrino-test-alerts,gcn.notices.icecube.gold_bronze_track_alerts,rubin-too-dev.pha-test-alerts,gcn.notices.superk.sn_alert,rubin-too-dev.galactic_sn-test-alerts"
+
+# Output to EFD testing topic (summit_efd)
+output-type: "confluent_rest"
+
+# What counts as observable from Rubin (used by all filters)
+observability-settings:
+  window_h: 24
+  sun_alt_max_deg: -12
+  min_alt_deg: 30
+
+# How long alerts are remembered for filtering duplicates
+history-max-age-days: 1
+
+# Filters
+treat_cache_miss_as_not_found: True
+filter-settings:
+  lvk_gw:
+    alert_type: "INITIAL"
+  icecube_nu:
+    alert_type: "initial" # We need to confirm with our IceCube colleagues that initial notices carry healpix_url and p_astro
+    # Look for coincidences between neutrinos and LVK BNS/NSBH alerts. Not yet enabled.
+    enable_coincidence: False
+  superk_sn:
+    alert_type: "initial"
+  # Eventually we will add the PHAs here.
+
+filters:
+  igwn.gwalert: lvk_gw
+  rubin-too-dev.lvk-test-alerts: lvk_gw
+  gcn.notices.icecube.gold_bronze_track_alerts: icecube_nu
+  rubin-too-dev.rubin-too-dev.neutrino-test-alerts: icecube_nu
+  gcn.notices.superk.sn_alert: superk_sn
+  rubin-too-dev.galactic_sn-test-alerts: superk_sn
+  # Eventually we will add the PHA's here too.
+  # rubin-too-dev.pha-test-alerts
