@@ -877,10 +877,48 @@ class LVKAlertFilter(AlertFilter):
 		# If there were an interest in handling updates, etc., logic should be added here.
 		return old_meta["type"] == "INITIAL" and new_meta["type"] == "RETRACTION"
 
-	def get_chirp_mass_estimate(self, message, metadata):
-		"""Return: a tuple of mass bin egdes and bin probabilities, or None if no suitable data
-		           could be downloaded.
+	def parse_chirp_mass_data(self, mass_data, source: str):
+		"""Validate chirp mass data in the form of a mapping with bin_edges and probabilities.
+		Args:
+		    mass_data: The decoded data
+		    source: A description of where the data came from, for log messages
+		Return: a tuple of mass bin egdes and bin probabilities, or None if the data are not valid.
 		"""
+		no_mass_data = None
+		if not isinstance(mass_data, Mapping):
+			logger.warning(f"Chirp mass data from {source} is not a mapping")
+			return no_mass_data
+		if "bin_edges" not in mass_data or "probabilities" not in mass_data:
+			logger.warning(f"Chirp mass data from {source} does not have both bin_edges and "
+			               "probabilities keys")
+			return no_mass_data
+		if not isinstance(mass_data["bin_edges"], Sequence) or \
+		  not isinstance(mass_data["probabilities"], Sequence):
+			logger.warning(f"Chirp mass data from {source} does not have sequences for both "
+			               "bin_edges and probabilities")
+			return no_mass_data
+		if len(mass_data["bin_edges"]) != 1 + len(mass_data["probabilities"]):
+			logger.warning(f"Chirp mass data from {source} does not have compatible lengths for "
+			               "bin_edges and probabilities")
+			return no_mass_data
+		return mass_data["bin_edges"], mass_data["probabilities"]
+
+	def get_chirp_mass_estimate(self, message, metadata):
+		"""Get the chirp mass distribution estimate for an alert.
+		This is taken from the event.mchirp_source field of the alert, which is present in recent
+		alerts. For alerts without that field, it is downloaded from GraceDB if possible.
+		Return: a tuple of mass bin egdes and bin probabilities, or None if no suitable data
+		        could be obtained.
+		"""
+		event = message.get("event")
+		if isinstance(event, Mapping) and "mchirp_source" in event:
+			# A null value, or invalid data, means that no estimate is available, which is not
+			# remedied by looking for the separate file.
+			if event["mchirp_source"] is None:
+				logger.info("Alert chirp mass data is null")
+				return None
+			return self.parse_chirp_mass_data(event["mchirp_source"], "the alert")
+		
 		no_mass_data = None
 		if "urls" not in message or "gracedb" not in message["urls"]:
 			return no_mass_data
@@ -897,23 +935,7 @@ class LVKAlertFilter(AlertFilter):
 		except Exception as ex:
 			logger.warning(f"Data fetched from {mass_url} cannot be decoded as JSON: {ex}")
 			return no_mass_data
-		if not isinstance(mass_data, Mapping):
-			logger.warning(f"Data fetched from {mass_url} is not a JSON mapping")
-			return no_mass_data
-		if "bin_edges" not in mass_data or "probabilities" not in mass_data:
-			logger.warning(f"Data fetched from {mass_url} does not have both bin_edges and "
-			               "probabilities keys")
-			return no_mass_data
-		if not isinstance(mass_data["bin_edges"], Sequence) or \
-		  not isinstance(mass_data["probabilities"], Sequence):
-			logger.warning(f"Data fetched from {mass_url} does not have sequences for both "
-			               "bin_edges and probabilities")
-			return no_mass_data
-		if len(mass_data["bin_edges"]) != 1 + len(mass_data["probabilities"]):
-			logger.warning(f"Data fetched from {mass_url} does not have compatible lengths for "
-			               "bin_edges and probabilities")
-			return no_mass_data
-		return mass_data["bin_edges"], mass_data["probabilities"]
+		return self.parse_chirp_mass_data(mass_data, mass_url)
 
 	def prob_in_range(self, mass_data, lo: float, hi: float):
 		"""Sum the probability in the bins of the chirp mass distribution which lie entirely within
