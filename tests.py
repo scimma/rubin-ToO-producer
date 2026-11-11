@@ -11,7 +11,8 @@ import numpy
 import pytest
 
 import forward_alerts
-from forward_alerts import Skymap, LVKAlertFilter, IceCubeAlertFilter, RecentEventCache, \
+from forward_alerts import Skymap, AlertFilter, LVKAlertFilter, IceCubeAlertFilter, RecentEventCache, \
+                           ObservabilitySettings, observable_at, \
                            trim_to_observable, observable_mask, DEG2_TO_SR, FAR_1_PER_YR, \
                            FAR_1_PER_3YR, PROB_MAP_ORDER, PROB_MAP_PIXEL_AREA_DEG2
 
@@ -129,7 +130,7 @@ def mass_data(bin_probs: dict):
 	return MCHIRP_EDGES, probs
 
 def lvk_filter(monkeypatch=None, masses=None, cache=None):
-	filter = LVKAlertFilter({}, None, True, event_cache=cache if cache is not None else RecentEventCache())
+	filter = LVKAlertFilter(AlertFilter.make_history(), None, True, event_cache=cache if cache is not None else RecentEventCache())
 	if masses is not None:
 		monkeypatch.setattr(filter, "get_chirp_mass_estimate", lambda message, metadata: masses)
 	return filter
@@ -190,12 +191,12 @@ def test_Skymap_flat_prob_map():
 def test_observable_mask():
 	mask = observable_mask(1<<PROB_MAP_ORDER, T0)
 	assert len(mask) == 12<<(2*PROB_MAP_ORDER)
-	assert forward_alerts._observable(*HIGH_B_POS, T0)[0]
-	assert not forward_alerts._observable(*SUN_POS, T0)[0]
+	assert observable_at(*HIGH_B_POS, T0)[0]
+	assert not observable_at(*SUN_POS, T0)[0]
 	# never rises above 30 degrees from Rubin
-	assert not forward_alerts._observable(0., 70., T0)[0]
+	assert not observable_at(0., 70., T0)[0]
 	# a zero-length window during the day contains no night time
-	assert not forward_alerts._observable(*HIGH_B_POS, "2026-11-15T18:00:00Z", window_h=0)[0]
+	assert not observable_at(*HIGH_B_POS, "2026-11-15T18:00:00Z", ObservabilitySettings(window_h=0))[0]
 
 def test_trim_to_observable():
 	skymap = skymap_from_bytes(make_skymap_at(100., *HIGH_B_POS))
@@ -236,12 +237,12 @@ def test_LVK_prob_in_range():
 	assert filter.prob_in_range(masses, 50., math.inf) == pytest.approx(0.0)
 
 def test_LVK_is_test():
-	filter = LVKAlertFilter({}, None, True)
+	filter = LVKAlertFilter(AlertFilter.make_history(), None, True)
 	assert filter.is_test({"superevent_id": "MS250509a"}, None)
 	assert not filter.is_test({"superevent_id": "S250509a"}, None)
 
 def test_LVK_alert_identifier():
-	filter = LVKAlertFilter({}, None, True)
+	filter = LVKAlertFilter(AlertFilter.make_history(), None, True)
 	test_id = "some_event_id"
 	alert_time = "2025-05-14T01:04:06.789Z"
 	event_time = "2025-05-14T01:02:03.456Z"
@@ -259,7 +260,7 @@ def test_LVK_alert_identifier():
 	assert id_meta["time"] == event_time
 
 def test_LVK_overrides_previous():
-	filter = LVKAlertFilter({}, None, True)
+	filter = LVKAlertFilter(AlertFilter.make_history(), None, True)
 	prelim =  {"type": "PRELIMINARY"}
 	init =    {"type": "INITIAL"}
 	retract = {"type": "RETRACTION"}
@@ -268,7 +269,7 @@ def test_LVK_overrides_previous():
 	assert filter.overrides_previous(init, retract)
 
 def test_LVK_should_follow_up_no_preliminary():
-	filter = LVKAlertFilter({}, None, True)
+	filter = LVKAlertFilter(AlertFilter.make_history(), None, True)
 	
 	result, result_data = filter.should_follow_up({"alert_type": "PRELIMINARY"}, None)
 	assert not result
@@ -562,7 +563,7 @@ def neutrino_map(monkeypatch):
 	return maps
 
 def test_IceCube_should_follow_up(neutrino_map):
-	filter = IceCubeAlertFilter({}, None, True, event_cache=RecentEventCache())
+	filter = IceCubeAlertFilter(AlertFilter.make_history(), None, True, event_cache=RecentEventCache())
 	assert filter.allowed_alert_type == "initial"
 	
 	# initial alerts are accepted without systematics
@@ -578,10 +579,11 @@ def test_IceCube_should_follow_up(neutrino_map):
 	assert not result
 	
 	# retracted events
-	filter.history["IceCube-261115A"] = {"type": "retraction"}
+	filter.history.add(RecentEventCache.HISTORY, "IceCube-261115A", Time.now(), filter,
+	                   meta={"type": "retraction"})
 	result, result_data = filter.should_follow_up(neutrino_alert(), None)
 	assert not result
-	filter.history.clear()
+	filter.history.entries.clear()
 	
 	# Galactic plane
 	result, result_data = filter.should_follow_up(neutrino_alert(pos=PLANE_POS), None)
@@ -599,7 +601,7 @@ def test_IceCube_should_follow_up(neutrino_map):
 	assert not result
 
 def test_IceCube_should_follow_up_tiers(neutrino_map):
-	filter = IceCubeAlertFilter({}, None, True, event_cache=RecentEventCache())
+	filter = IceCubeAlertFilter(AlertFilter.make_history(), None, True, event_cache=RecentEventCache())
 	
 	def classify(**kwargs):
 		result, result_data = filter.should_follow_up(neutrino_alert(**kwargs), None)
@@ -618,15 +620,15 @@ def test_IceCube_should_follow_up_tiers(neutrino_map):
 def test_IceCube_should_follow_up_coincident(neutrino_map):
 	cache = RecentEventCache()
 	gw_skymap = skymap_from_bytes(make_skymap_at(100., *HIGH_B_POS))
-	cache.add(forward_alerts.LVK_BNS_NSBH_EVENT, "S261115a",
-	          Time(T0) + 5*u.min, gw_skymap.credible_mask(0.9))
+	cache.add(RecentEventCache.LVK_BNS_NSBH, "S261115a",
+	          Time(T0) + 5*u.min, None, gw_skymap.credible_mask(0.9))
 	
 	# disabled by default
-	filter = IceCubeAlertFilter({}, None, True, event_cache=cache)
+	filter = IceCubeAlertFilter(AlertFilter.make_history(), None, True, event_cache=cache)
 	result, result_data = filter.should_follow_up(neutrino_alert(p_astro=0.35), None)
 	assert not result
 	
-	filter = IceCubeAlertFilter({}, None, True, enable_coincidence=True, event_cache=cache)
+	filter = IceCubeAlertFilter(AlertFilter.make_history(), None, True, enable_coincidence=True, event_cache=cache)
 	result, result_data = filter.should_follow_up(neutrino_alert(p_astro=0.35), None)
 	assert result
 	assert result_data["type"] == "neutrino_coincident"
@@ -651,7 +653,7 @@ def test_coincidence_from_LVK_filter(neutrino_map):
 	gw_filter = lvk_filter(cache=cache)
 	result, result_data = gw_filter.should_follow_up(lvk_alert(75.), None)
 	assert result
-	nu_filter = IceCubeAlertFilter({}, None, True, enable_coincidence=True, event_cache=cache)
+	nu_filter = IceCubeAlertFilter(AlertFilter.make_history(), None, True, enable_coincidence=True, event_cache=cache)
 	result, result_data = nu_filter.should_follow_up(neutrino_alert(p_astro=0.35), None)
 	assert result
 	assert result_data["type"] == "neutrino_coincident"
@@ -660,18 +662,105 @@ def test_RecentEventCache_max_age():
 	cache = RecentEventCache()
 	assert cache.max_age_s == 6*3600
 	mask = numpy.zeros(12<<(2*PROB_MAP_ORDER), dtype=bool)
-	cache.add("A", "first", T0, mask)
-	cache.add("A", "second", Time(T0) + 5*u.hour, mask)
+	cache.add("A", "first", T0, None, mask)
+	cache.add("A", "second", Time(T0) + 5*u.hour, None, mask)
 	assert cache.get("A", "first") is not None
-	cache.add("A", "third", Time(T0) + 7*u.hour, mask)
+	cache.add("A", "third", Time(T0) + 7*u.hour, None, mask)
 	assert cache.get("A", "first") is None
 	assert cache.get("A", "second") is not None
 	# re-adding the same source replaces its entry
-	cache.add("A", "third", Time(T0) + 7*u.hour, mask, extra=1)
-	assert len([e for e in cache.entries if e["source"] == "third"]) == 1
+	cache.add("A", "third", Time(T0) + 7*u.hour, None, mask, extra=1)
+	assert len([e for e in cache.entries.values() if e.source == "third"]) == 1
 	assert cache.get("A", "third")["extra"] == 1
 	cache.remove("A", "third")
 	assert cache.get("A", "third") is None
+	# the same source can have entries of different kinds
+	cache.add("A", "same", Time(T0) + 7*u.hour, None)
+	cache.add("B", "same", Time(T0) + 7*u.hour, None)
+	assert cache.get("A", "same") is not cache.get("B", "same")
+
+def test_RecentEventCache_expire():
+	cache = RecentEventCache(max_age_s=3600.)
+	cache.add("A", "first", T0, None)
+	cache.add("A", "second", Time(T0) + 30*u.min, None)
+	# expiry can also be requested explicitly, relative to any time
+	cache.expire(Time(T0) + 50*u.min)
+	assert cache.get("A", "first") is not None
+	assert cache.get("A", "second") is not None
+	cache.expire(Time(T0) + 80*u.min)
+	assert cache.get("A", "first") is None
+	assert cache.get("A", "second") is not None
+	cache.expire(Time(T0) + 3*u.hour)
+	assert len(cache.entries) == 0
+	# expiring an empty cache is harmless
+	RecentEventCache().expire()
+
+def test_RecentEventCache_entry():
+	cache = RecentEventCache()
+	owner = object()
+	mask = numpy.ones(4, dtype=bool)
+	entry = cache.add("A", "event", T0, owner, mask, status="new")
+	assert cache.get("A", "event") is entry
+	# required fields are attributes, and any extra data is accessed by indexing
+	assert entry.kind == "A"
+	assert entry.source == "event"
+	assert entry.filter is owner
+	assert entry.mask is mask
+	assert entry.time == Time(T0)
+	assert entry["status"] == "new"
+	assert "status" in entry
+	assert "other" not in entry
+	entry["other"] = 1
+	assert cache.get("A", "event")["other"] == 1
+	assert cache.find("A", Time(T0) + 1*u.min, 120.) == [entry]
+	assert cache.find("B", Time(T0) + 1*u.min, 120.) == []
+	assert cache.find("A", Time(T0) + 3*u.min, 120.) == []
+
+def test_history_is_bounded():
+	# alerts are remembered for 7 days by default
+	history = AlertFilter.make_history()
+	assert history.max_age_s == 7*24*3600
+	assert AlertFilter.make_history(3600.).max_age_s == 3600.
+	
+	sender = CaptureSender()
+	filter = LVKAlertFilter(history, sender, True, event_cache=RecentEventCache())
+	alert = lvk_alert(75.)
+	assert filter.process(alert, None)
+	entry = history.get(RecentEventCache.HISTORY, "S261115a")
+	assert entry["meta"]["type"] == "INITIAL"
+	assert entry.filter is filter
+	# duplicates are ignored while the alert is remembered
+	assert not filter.process(alert, None)
+	history.expire(Time.now() + 6*u.day)
+	assert not filter.process(alert, None)
+	assert len(sender.sent) == 1
+	# ...but not once it has been forgotten
+	history.expire(Time.now() + 8*u.day)
+	assert history.get(RecentEventCache.HISTORY, "S261115a") is None
+	assert filter.process(alert, None)
+	assert len(sender.sent) == 2
+
+def test_observability_settings():
+	# settings are immutable, and change which parts of the sky are observable
+	settings = ObservabilitySettings()
+	assert (settings.window_h, settings.sun_alt_max_deg, settings.min_alt_deg) == (24., -12., 30.)
+	with pytest.raises(Exception):
+		settings.window_h = 12.
+	assert observable_at(*HIGH_B_POS, T0, settings)[0]
+	# nothing is observable if the Sun is never low enough, or if the window is too short to contain
+	# any night time
+	assert not observable_at(*HIGH_B_POS, T0, ObservabilitySettings(sun_alt_max_deg=-90.))[0]
+	assert not observable_at(*HIGH_B_POS, "2026-11-15T18:00:00Z", ObservabilitySettings(window_h=1.))[0]
+	
+	# filters use the settings they are given
+	strict = ObservabilitySettings(sun_alt_max_deg=-90.)
+	alert = lvk_alert(75.)
+	filter = LVKAlertFilter(AlertFilter.make_history(), None, True, strict, event_cache=RecentEventCache())
+	assert filter.obs_settings is strict
+	assert not filter.should_follow_up(alert, None)[0]
+	filter = LVKAlertFilter(AlertFilter.make_history(), None, True, event_cache=RecentEventCache())
+	assert filter.obs_settings == ObservabilitySettings()
+	assert filter.should_follow_up(alert, None)[0]
 
 class CaptureSender:
 	def __init__(self):
@@ -682,7 +771,7 @@ class CaptureSender:
 
 def coincidence_filters(enable_coincidence: bool=True):
 	"""LVK and IceCube filters sharing a history, sender, and event cache, as in the main program"""
-	history = {}
+	history = AlertFilter.make_history()
 	sender = CaptureSender()
 	cache = RecentEventCache()
 	gw_filter = LVKAlertFilter(history, sender, True, event_cache=cache)
@@ -764,3 +853,49 @@ def test_late_LVK_alert_no_upgrade(neutrino_map):
 	nu_filter.process(neutrino_alert(p_astro=0.35), None)
 	gw_filter.process(lvk_alert(75., far=4e-8), None)
 	assert len(sender.sent) == 0
+
+# The chirp mass information from a sample alert in the new format (S261111j)
+ALERT_MCHIRP_SOURCE = {"bin_edges": MCHIRP_EDGES, "probabilities": [0.0]*12 + [1.0] + [0.0]*5}
+
+def test_LVK_chirp_mass_from_alert(monkeypatch):
+	def no_fetch(*args, **kwargs):
+		raise AssertionError("chirp mass data should come from the alert")
+	monkeypatch.setattr(forward_alerts, "fetch_file", no_fetch)
+	filter = lvk_filter()
+	alert = lvk_alert(75.)
+	alert["urls"] = {"gracedb": "https://gracedb.ligo.org/superevents/S261115a/view/"}
+	alert["event"]["mchirp_source"] = ALERT_MCHIRP_SOURCE
+	mass_data = filter.get_chirp_mass_estimate(alert, None)
+	assert list(mass_data[0]) == MCHIRP_EDGES
+	assert filter.prob_in_range(mass_data, 2.3, 5.5) == pytest.approx(1.0)
+	
+	# null or malformed data mean no estimate, without trying to download one
+	for bad in (None, [], {"bin_edges": [1., 2.]}, {"bin_edges": [1., 2.], "probabilities": [1., 0.]}):
+		alert["event"]["mchirp_source"] = bad
+		assert filter.get_chirp_mass_estimate(alert, None) is None
+
+def test_LVK_chirp_mass_fallback_download(monkeypatch):
+	urls = []
+	def fake_fetch(url, use_cache=False):
+		urls.append(url)
+		return b'{"bin_edges": [0.1, 1.0, 2.0], "probabilities": [0.25, 0.75]}'
+	monkeypatch.setattr(forward_alerts, "fetch_file", fake_fetch)
+	filter = lvk_filter()
+	# alerts without the field still get it from GraceDB
+	alert = lvk_alert(75.)
+	alert["urls"] = {"gracedb": "https://gracedb.ligo.org/superevents/S261115a/view/"}
+	assert "mchirp_source" not in alert["event"]
+	mass_data = filter.get_chirp_mass_estimate(alert, None)
+	assert urls == ["https://gracedb.ligo.org/api/superevents/S261115a/files/mchirp_source.json"]
+	assert list(mass_data[1]) == [0.25, 0.75]
+
+def test_LVK_should_follow_up_chirp_mass_in_alert(monkeypatch):
+	monkeypatch.setattr(forward_alerts, "fetch_file", lambda *a, **k: pytest.fail("download"))
+	# chirp mass from the alert gives the lensed BNS alternative without HasMassGap
+	filter = lvk_filter()
+	alert = lvk_alert(800., classification={"BNS": 0.85, "NSBH": 0.05, "BBH": 0.09, "Noise": 0.01},
+	                  properties={"HasNS": 0.9, "HasRemnant": 0.5, "HasMassGap": 0.0})
+	alert["event"]["mchirp_source"] = ALERT_MCHIRP_SOURCE
+	result, result_data = filter.should_follow_up(alert, None)
+	assert result
+	assert result_data["type"] == "lensed_BNS_case_A"

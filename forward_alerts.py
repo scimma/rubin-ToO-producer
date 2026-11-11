@@ -10,7 +10,7 @@ from astropy.utils import iers
 from astropy_healpix import HEALPix, boundaries_lonlat, healpy
 from astropy_healpix.core import healpix_cone_search
 import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import datetime
 import fastavro
 import functools
@@ -35,7 +35,8 @@ logger = logging.getLogger("ToO Alert Producer")
 use_file_cache = False
 treat_cache_miss_as_not_found = False
 
-# Trigger thresholds. Section numbers refer to the "Rubin ToO 2026 revised strategy" report.
+# Thresholds shared by several filters. Thresholds specific to a category of alerts are defined by
+# the filter classes. Section numbers refer to the "Rubin ToO 2026 revised strategy" report.
 
 DEG2_TO_SR = (math.pi/180.)**2
 # False alarm rate of one per year (~3.17e-8 Hz). The report quotes "1.6e-8 Hz", which is a typo for
@@ -44,14 +45,6 @@ FAR_1_PER_YR = 1./(365.25*86400.)
 # False alarm rate of one per three years (~1.06e-8 Hz), used for sub-solar mass candidates (§2.3.3)
 FAR_1_PER_3YR = FAR_1_PER_YR/3.
 
-# Observability (§2.1.3 step 3, also used by §2.2.3, §2.3.3 and §3)
-RUBIN_LAT_DEG = -30.2446
-RUBIN_LON_DEG = -70.7494
-RUBIN_HEIGHT_M = 2663.
-OBS_WINDOW_H = 24.          # look for observability within 24 hours of the event
-OBS_SUN_ALT_MAX_DEG = -12.  # Sun must be below nautical twilight
-OBS_MIN_ALT_DEG = 30.       # airmass < 2
-OBS_TIME_STEP_MIN = 10.     # sampling interval within the observability window
 # HEALPix order used for per-pixel probability and observability work (pixels of ~0.21 deg^2)
 PROB_MAP_ORDER = 7
 PROB_MAP_PIXEL_AREA_DEG2 = (4*math.pi/(12<<(PROB_MAP_ORDER<<1)))/DEG2_TO_SR
@@ -60,52 +53,8 @@ PROB_MAP_PIXEL_AREA_DEG2 = (4*math.pi/(12<<(PROB_MAP_ORDER<<1)))/DEG2_TO_SR
 MIN_DEC_CUT_DEG = 30.
 GAL_LAT_CUT_DEG = 10.       # |b| > 10 deg (§2.1.3 step 4, §2.3.3, §3)
 GW_CRED = 0.9               # credible level used to define the GW localisation region
-
-# BNS and NSBH mergers (§2.1.3)
-BNS_NSBH_CLASS_MIN = 0.9      # step 1: P(BNS)+P(NSBH) > 0.9
-HASNS_MIN = 0.5               # step 1: HasNS >= 0.5
-HASREMNANT_MIN = 0.10         # step 1: HasRemnant >= 0.10
-MCHIRP_NS_MAX = 2.3           # step 1: P(Mchirp < 2.3 Msun) >= 0.9
-MCHIRP_GAP_MAX = 5.5          # step 1: P(2.3 < Mchirp < 5.5 Msun) >= 0.9 ...
-BNS_NSBH_GAP_CLASS_MIN = 0.1  #         ... and P(BNS)+P(NSBH) > 0.1
-MCHIRP_PROB_MIN = 0.9         # probability required for all chirp-mass range conditions
-BNS_MAX_AREA_DEG2 = 1500.     # step 3: trim Omega_obs to at most this area
-HIGH_B_PROB_MIN = 0.10        # step 4: probability in Omega_obs with |b| > 10 deg (also §2.3.3)
-BNS_GOLD_DEG2 = 100.          # step 5: Gold < 100 deg^2
-BNS_SILVER_DEG2 = 500.        # step 5: Silver < 500 deg^2, Bronze < 1500 deg^2
-
-# BBH mergers (§2.2.3)
-BBH_MCHIRP_MIN = 22.          # P(Mchirp >= 22 Msun) >= 0.9
-BBH_MAX_AREA_DEG2 = 100.      # full 90% credible area < 100 deg^2
-BBH_OBS_FRAC_MIN = 0.70       # fraction of total probability in observable pixels > 0.70
-
-# Sub-solar mass candidates (§2.3.3)
-SSM_SEARCH = "SSM"            # value of event.search for the SSM search pipeline(s)
-HASSSM_MIN = 0.5              # HasSSM >= 0.5
-SSM_MAX_AREA_DEG2 = 500.      # trim Omega_obs to at most this area
-SSM_GOLD_DEG2 = 100.          # Gold < 100 deg^2, Silver < 500 deg^2
-
-# Gravitationally lensed BNS mergers (§5.1.3)
-LENSED_MASSGAP_MIN = 0.9      # HasMassGap >= 0.9 ...
-LENSED_MCHIRP_MIN = 2.3       # ... or P(2.3 < Mchirp < 5.5 Msun) >= 0.9
-# The report says 5 Msun, but the LVK chirp-mass bins have no edge there (edges are 3.0 and 5.5),
-# so the nearest edge above is used.
-LENSED_MCHIRP_MAX = 5.5
-LENSED_NSBH_MAX = 0.1         # P(NSBH) < 0.1
-LENSED_MAX_DEG2 = 900.        # 90% credible area <= 900 deg^2
-LENSED_GOLD_DEG2 = 15.        # Gold < 15 deg^2
-
-# Neutrinos (§3)
-NU_CRED = 0.9                 # >= 90% of the contour within a single pointing
-RUBIN_FOV_SR = 9.6*DEG2_TO_SR # Rubin field of view (~0.002924 sr)
-NU_EHE_ENERGY_TEV = 1000.     # EHE: energy > 1 PeV (nu_energy is in TeV) ...
-NU_EHE_PASTRO = 0.5           # ... and p_astro > 0.5
-NU_COINC_PASTRO = 0.3         # coincident with LVK BNS/NSBH: p_astro > 0.3 ...
-NU_COINC_DT_S = 600.          # ... and |dT| < 10 minutes
-NU_STD_PASTRO = 0.4           # standard: p_astro > 0.4
-# How long events are kept for coincidence checks. LVK Initial alerts typically arrive well after
-# neutrino alerts for the same time, so neutrino alerts must be kept long enough to be matched.
-COINCIDENCE_CACHE_MAX_AGE_S = 6*3600.
+# Maximum time between a GW event and a neutrino event for them to be considered coincident (§3)
+COINCIDENCE_MAX_DT_S = 600.
 
 def load_yaml_config(file_path, config):
 	"""Load settings from file_path and merge into config"""
@@ -353,16 +302,27 @@ class Skymap:
 		return flat_map
 
 
-RUBIN_LOCATION = EarthLocation(lat=RUBIN_LAT_DEG*astropy.units.deg,
-                               lon=RUBIN_LON_DEG*astropy.units.deg,
-                               height=RUBIN_HEIGHT_M*astropy.units.m)
+RUBIN_LOCATION = EarthLocation(lat=-30.2446*astropy.units.deg, lon=-70.7494*astropy.units.deg,
+                               height=2663.*astropy.units.m)
 
-def _observable(ra_deg, dec_deg, t0, window_h: float=OBS_WINDOW_H,
-                sun_alt_max: float=OBS_SUN_ALT_MAX_DEG, min_alt: float=OBS_MIN_ALT_DEG):
+@dataclass(frozen=True)
+class ObservabilitySettings:
+	"""
+	Settings which define whether a position on the sky counts as observable from Rubin: it must be
+	above min_alt_deg at some time in the window of window_h hours following an event, at which the
+	Sun is below sun_alt_max_deg. (§2.1.3 step 3, also used by §2.2.3, §2.3.3 and §3)
+	Instances are immutable so that they can be used as cache keys.
+	"""
+	window_h: float = 24.           # look for observability within 24 hours of the event
+	sun_alt_max_deg: float = -12.   # Sun must be below nautical twilight
+	min_alt_deg: float = 30.        # airmass < 2
+	time_step_min: float = 10.      # sampling interval within the window
+
+def observable_at(ra_deg, dec_deg, t0, settings: ObservabilitySettings=ObservabilitySettings()):
 	"""
 	Determine whether sky positions are observable from Rubin: a position is observable if at any
-	sample time (every OBS_TIME_STEP_MIN minutes) in [t0, t0+window_h] the Sun is below sun_alt_max
-	and the position is above min_alt.
+	sample time in [t0, t0+settings.window_h] the Sun is below settings.sun_alt_max_deg and the
+	position is above settings.min_alt_deg.
 	
 	Target altitudes are computed from the apparent (TETE) coordinates at t0 and the apparent local
 	sidereal time, ignoring refraction and the drift of apparent coordinates within the window; this
@@ -371,9 +331,7 @@ def _observable(ra_deg, dec_deg, t0, window_h: float=OBS_WINDOW_H,
 	Args:
 	    ra_deg, dec_deg: ICRS coordinates, in degrees (scalars or arrays)
 	    t0: Start of the window, in any form accepted by astropy.time.Time
-	    window_h: Length of the window, in hours
-	    sun_alt_max: Maximum altitude of the Sun, in degrees
-	    min_alt: Minimum target altitude, in degrees
+	    settings: The definition of observability
 	Return: A boolean array with the shape of ra_deg
 	"""
 	ra = numpy.atleast_1d(numpy.asarray(ra_deg, dtype=float))
@@ -384,24 +342,24 @@ def _observable(ra_deg, dec_deg, t0, window_h: float=OBS_WINDOW_H,
 	with iers.conf.set_temp("auto_max_age", None), \
 	     iers.conf.set_temp("iers_degraded_accuracy", "ignore"):
 		t0 = Time(t0)
-		n_steps = int(math.floor(window_h*60./OBS_TIME_STEP_MIN)) + 1
-		times = t0 + numpy.arange(n_steps)*OBS_TIME_STEP_MIN*astropy.units.min
+		n_steps = int(math.floor(settings.window_h*60./settings.time_step_min)) + 1
+		times = t0 + numpy.arange(n_steps)*settings.time_step_min*astropy.units.min
 		sun_alt = get_sun(times).transform_to(AltAz(obstime=times, location=RUBIN_LOCATION)).alt.deg
-		night = times[sun_alt < sun_alt_max]
+		night = times[sun_alt < settings.sun_alt_max_deg]
 		if len(night) == 0:
 			return observable
 		apparent = ICRS(ra=ra*astropy.units.deg, dec=dec*astropy.units.deg).transform_to(TETE(obstime=t0))
 		lsts = night.sidereal_time("apparent", longitude=RUBIN_LOCATION.lon).rad
 	app_ra = apparent.ra.rad
-	sin_part = numpy.sin(apparent.dec.rad) * math.sin(math.radians(RUBIN_LAT_DEG))
-	cos_part = numpy.cos(apparent.dec.rad) * math.cos(math.radians(RUBIN_LAT_DEG))
-	sin_min_alt = math.sin(math.radians(min_alt))
+	sin_part = numpy.sin(apparent.dec.rad) * math.sin(RUBIN_LOCATION.lat.rad)
+	cos_part = numpy.cos(apparent.dec.rad) * math.cos(RUBIN_LOCATION.lat.rad)
+	sin_min_alt = math.sin(math.radians(settings.min_alt_deg))
 	for lst in lsts:
 		observable |= (sin_part + cos_part*numpy.cos(lst - app_ra)) > sin_min_alt
 	return observable
 
 @functools.lru_cache(maxsize=4)
-def _pixel_centres(nside: int):
+def pixel_centres(nside: int):
 	"""ICRS coordinates, in degrees, of the centres of all NESTED pixels at nside"""
 	centres = HEALPix(nside=nside, order="nested", frame=ICRS()).healpix_to_skycoord(numpy.arange(12*nside*nside))
 	return centres.ra.deg, centres.dec.deg
@@ -409,45 +367,47 @@ def _pixel_centres(nside: int):
 @functools.lru_cache(maxsize=4)
 def high_galactic_latitude_mask(nside: int):
 	"""A NESTED boolean map of pixels whose centres have |b| > GAL_LAT_CUT_DEG"""
-	ra, dec = _pixel_centres(nside)
+	ra, dec = pixel_centres(nside)
 	b = ICRS(ra=ra*astropy.units.deg, dec=dec*astropy.units.deg).transform_to(Galactic()).b.deg
 	mask = numpy.abs(b) > GAL_LAT_CUT_DEG
 	mask.flags.writeable = False
 	return mask
 
 @functools.lru_cache(maxsize=16)
-def _observable_mask(nside: int, t0_iso: str, window_h: float, sun_alt_max: float, min_alt: float):
-	ra, dec = _pixel_centres(nside)
-	mask = _observable(ra, dec, t0_iso, window_h, sun_alt_max, min_alt)
+def observable_mask(nside: int, t0: str, settings: ObservabilitySettings=ObservabilitySettings()):
+	"""
+	Make a NESTED boolean map of the pixels (judged by their centres) which are observable from Rubin
+	according to settings, for an event at time t0. See observable_at.
+	The result is cached, and must not be modified by the caller.
+	
+	Args:
+	    nside: The HEALPix N_side of the map
+	    t0: The event time, as an ISO 8601 string (which must be hashable for the caching)
+	    settings: The definition of observability
+	"""
+	ra, dec = pixel_centres(nside)
+	mask = observable_at(ra, dec, t0, settings)
 	mask.flags.writeable = False
 	return mask
 
-def observable_mask(nside: int, t0, window_h: float=OBS_WINDOW_H,
-                    sun_alt_max: float=OBS_SUN_ALT_MAX_DEG, min_alt: float=OBS_MIN_ALT_DEG):
-	"""
-	Make a NESTED boolean map of the pixels (judged by their centres) which are observable from Rubin
-	at some time in [t0, t0+window_h], with the Sun below sun_alt_max and the pixel above min_alt
-	(30 degrees corresponds to airmass 2). See _observable.
-	The result is cached, and must not be modified by the caller.
-	"""
-	return _observable_mask(int(nside), Time(t0).isot, float(window_h), float(sun_alt_max),
-	                        float(min_alt))
-
-def observable_credible_region(skymap: Skymap, t0, cred: float=GW_CRED, **obs_settings):
+def observable_credible_region(skymap: Skymap, t0: str,
+                               settings: ObservabilitySettings=ObservabilitySettings(),
+                               cred: float=GW_CRED):
 	"""
 	Compute Omega_obs, the observable part of the credible region, at order PROB_MAP_ORDER.
 	Return: A tuple of the per-pixel probability map and the Omega_obs boolean map
 	"""
 	prob = skymap.flat_prob_map(PROB_MAP_ORDER)
-	obs = observable_mask(1<<PROB_MAP_ORDER, t0, **obs_settings)
+	obs = observable_mask(1<<PROB_MAP_ORDER, t0, settings)
 	return prob, skymap.credible_mask(cred, PROB_MAP_ORDER) & obs
 
-def trim_to_observable(skymap: Skymap, t0, max_area_deg2: float, cred: float=GW_CRED,
-                       **obs_settings):
+def trim_to_observable(skymap: Skymap, t0: str, max_area_deg2: float,
+                       settings: ObservabilitySettings=ObservabilitySettings(),
+                       cred: float=GW_CRED):
 	"""
 	Compute Omega_obs, the observable part of the cred credible region, and if its area is larger
 	than max_area_deg2 keep only its highest-probability pixels whose total area is no more than
-	max_area_deg2. Observability is evaluated by observable_mask, which takes obs_settings.
+	max_area_deg2. Observability is evaluated by observable_mask.
 	
 	Probabilities are NOT renormalised: the probabilities returned are fractions of the total
 	probability of the whole map, so they do not account for unobservable or trimmed regions, and
@@ -457,7 +417,7 @@ def trim_to_observable(skymap: Skymap, t0, max_area_deg2: float, cred: float=GW_
 	        degrees, the total probability in the mask, and the probability in the part of the mask
 	        with |b| > GAL_LAT_CUT_DEG.
 	"""
-	prob, omega = observable_credible_region(skymap, t0, cred, **obs_settings)
+	prob, omega = observable_credible_region(skymap, t0, settings, cred)
 	untrimmed_area = numpy.count_nonzero(omega) * PROB_MAP_PIXEL_AREA_DEG2
 	if untrimmed_area > max_area_deg2:
 		max_pixels = int(math.floor(max_area_deg2/PROB_MAP_PIXEL_AREA_DEG2))
@@ -474,9 +434,11 @@ def trim_to_observable(skymap: Skymap, t0, max_area_deg2: float, cred: float=GW_
 	high_b_prob = float(prob[mask & high_galactic_latitude_mask(1<<PROB_MAP_ORDER)].sum())
 	return mask, area, total_prob, high_b_prob
 
-def observable_credible_area(skymap: Skymap, t0, cred: float=GW_CRED, **obs_settings):
+def observable_credible_area(skymap: Skymap, t0: str,
+                             settings: ObservabilitySettings=ObservabilitySettings(),
+                             cred: float=GW_CRED):
 	"""The area, in square degrees, of the untrimmed Omega_obs"""
-	return numpy.count_nonzero(observable_credible_region(skymap, t0, cred, **obs_settings)[1]) * \
+	return numpy.count_nonzero(observable_credible_region(skymap, t0, settings, cred)[1]) * \
 	       PROB_MAP_PIXEL_AREA_DEG2
 
 def downgrade_mask(mask, from_order: int, to_order: int):
@@ -486,56 +448,109 @@ def downgrade_mask(mask, from_order: int, to_order: int):
 
 class RecentEventCache:
 	"""
-	A small store of recently seen events, shared between filters so that one filter can look for
-	coincidences with events passed by another. Entries whose event times are more than max_age_s
-	older than the newest event added are discarded.
-	"""
-	def __init__(self, max_age_s: float=COINCIDENCE_CACHE_MAX_AGE_S):
-		self.max_age_s = max_age_s
-		self.entries = []
+	A store of recently seen events, with at most one entry for each combination of a kind of event
+	and a source (event identifier). It is used both to track the alerts which have been seen, for
+	filtering duplicates (as the history of a set of filters), and to allow filters to look for
+	coincidences with events passed by other filters.
 	
-	def add(self, kind: str, source: str, time, mask, **extra):
+	Entries whose times are more than max_age_s older than the newest entry added (or than the time
+	given to expire) are discarded.
+	"""
+	# Kinds of events
+	HISTORY = "HISTORY"             # alerts which have been seen, for filtering duplicates
+	LVK_BNS_NSBH = "LVK_BNS_NSBH"   # LVK alerts which have passed as BNS/NSBH mergers
+	NEUTRINO = "NEUTRINO"           # neutrino alerts which are candidates for coincidences
+	
+	# How long events are kept for coincidence checks. LVK Initial alerts typically arrive well after
+	# neutrino alerts for the same time, so neutrino alerts must be kept long enough to be matched.
+	DEFAULT_MAX_AGE_S = 6*3600.
+	
+	@dataclass(eq=False)
+	class Entry:
 		"""
-		Add an event, replacing any previous entry of the same kind for the same source.
+		Attributes:
+		    kind: A label for the category of event
+		    source: The event identifier
+		    time: The time associated with the entry
+		    filter: The filter responsible for the event
+		    mask: For events with a sky location, a NESTED boolean map of the event's credible
+		          region at order PROB_MAP_ORDER
+		    extra: Any additional data, which can be accessed by indexing the entry itself
+		"""
+		kind: str
+		source: str
+		time: Time
+		filter: object
+		mask: numpy.ndarray = None
+		extra: dict = field(default_factory=dict)
+		
+		def __getitem__(self, key):
+			return self.extra[key]
+		
+		def __setitem__(self, key, value):
+			self.extra[key] = value
+		
+		def __contains__(self, key):
+			return key in self.extra
+	
+	def __init__(self, max_age_s: float=DEFAULT_MAX_AGE_S):
+		self.max_age_s = max_age_s
+		self.entries = {}
+		self.latest_time = None
+	
+	def add(self, kind: str, source: str, time, filter, mask=None, **extra):
+		"""
+		Add an event, replacing any previous entry of the same kind for the same source, and
+		discarding any entries which have expired.
 		
 		Args:
 		    kind: A label for the category of event
 		    source: The event identifier
-		    time: The event time, in any form accepted by astropy.time.Time
+		    time: The time associated with the entry, in any form accepted by astropy.time.Time
+		    filter: The filter responsible for the event
 		    mask: A NESTED boolean map of the event's credible region at order PROB_MAP_ORDER
 		    extra: Any additional data to store in the entry
 		Return: The new entry
 		"""
 		time = Time(time)
-		self.entries = [e for e in self.entries
-		                if not (e["kind"] == kind and e["source"] == source) and
-		                   (time - e["time"]).sec <= self.max_age_s]
-		entry = dict(extra, kind=kind, source=source, time=time, mask=mask)
-		self.entries.append(entry)
+		entry = self.Entry(kind, source, time, filter, mask, extra)
+		self.entries[(kind, source)] = entry
+		if self.latest_time is None or time > self.latest_time:
+			self.latest_time = time
+		self.expire()
 		return entry
+	
+	def expire(self, now=None):
+		"""
+		Discard entries which are more than max_age_s older than now.
+		
+		Args:
+		    now: The reference time, in any form accepted by astropy.time.Time. By default, the time
+		         of the newest entry added, which is independent of the real time and so is suited to
+		         processing archived alerts.
+		"""
+		now = self.latest_time if now is None else Time(now)
+		if now is None:
+			return
+		expired = [key for key, e in self.entries.items() if (now - e.time).sec > self.max_age_s]
+		for key in expired:
+			del self.entries[key]
 	
 	def get(self, kind: str, source: str):
 		"""Return the entry of the given kind for the given source, or None"""
-		for e in self.entries:
-			if e["kind"] == kind and e["source"] == source:
-				return e
-		return None
+		return self.entries.get((kind, source))
 	
 	def remove(self, kind: str, source: str):
-		self.entries = [e for e in self.entries if not (e["kind"] == kind and e["source"] == source)]
+		self.entries.pop((kind, source), None)
 	
 	def find(self, kind: str, time, max_dt_s: float):
 		"""Return all entries of the given kind with times within max_dt_s seconds of time"""
 		time = Time(time)
-		return [e for e in self.entries
-		        if e["kind"] == kind and abs((e["time"] - time).sec) < max_dt_s]
+		return [e for e in self.entries.values()
+		        if e.kind == kind and abs((e.time - time).sec) < max_dt_s]
 
-# The cache used by default by all filters
+# The cache used by default by all filters for coincidence checks
 recent_events = RecentEventCache()
-
-# Category labels for events stored in the recent event cache
-LVK_BNS_NSBH_EVENT = "LVK_BNS_NSBH"
-NEUTRINO_EVENT = "NEUTRINO"
 
 
 def write_json(records, compressed: bool=False):
@@ -689,19 +704,39 @@ class ConfluentRESTSender(AlertSender):
 class AlertFilter:
 	last_timestamp = 0
 
-	def __init__(self, history: dict, sender: AlertSender, allow_tests: bool):
+	# By default, alerts are remembered for filtering duplicates for this long
+	DEFAULT_HISTORY_MAX_AGE_S = 7*24*3600.
+	
+	@staticmethod
+	def make_history(max_age_s: float=None):
+		"""Make a history suitable for passing to the filter constructors, which forgets alerts
+		which are more than max_age_s old (by default, DEFAULT_HISTORY_MAX_AGE_S).
+		"""
+		if max_age_s is None:
+			max_age_s = AlertFilter.DEFAULT_HISTORY_MAX_AGE_S
+		return RecentEventCache(max_age_s=max_age_s)
+	
+	def __init__(self, history: RecentEventCache, sender: AlertSender, allow_tests: bool,
+	             obs_settings: ObservabilitySettings=None):
 		"""
 		Args:
-			history: A mapping of alert identifiers to alert details, used for filtering duplicates.
+			history: A cache of the alerts which have been seen (as entries of kind
+			         RecentEventCache.HISTORY, indexed by alert identifier, with the alert metadata in
+			         the "meta" item), used for filtering duplicates.
 			         Alerts may be duplictaed both due to data transport issues, or due to multiple
 			         alerts being sent for the same event, which may or may not be of superseding
 			         interest to this system.
+			         Alerts are forgotten when they are older than the cache's maximum age, so
+			         the history does not grow without bound.
 			allow_tests: If true, alerts marked as tests are fully processed, otherwise they are
 			             dropped.
+			obs_settings: The definition of what is observable from Rubin, for filters which need it.
+			              By default, the standard definition is used.
 		"""
 		self.history = history
 		self.sender = sender
 		self.allow_tests = allow_tests
+		self.obs_settings = obs_settings if obs_settings is not None else ObservabilitySettings()
 	
 	def is_test(self, message, metadata):
 		"""
@@ -795,15 +830,17 @@ class AlertFilter:
 		# handle duplicates
 		is_update = False
 		if alert_id is not None:
-			if alert_id in self.history:
+			previous = self.history.get(RecentEventCache.HISTORY, alert_id)
+			if previous is not None:
 				logger.info(f"This alert has been seen before")
-				if not self.overrides_previous(self.history[alert_id], id_meta):
+				if not self.overrides_previous(previous["meta"], id_meta):
 					logger.info(f"This alert message does not override the previous")
 					return False
 				else:
 					logger.info(f"This alert message overrides the previous")
 					is_update = True
-			self.history[alert_id] = id_meta
+			# the age of history entries is measured in real time, from when they were last seen
+			self.history.add(RecentEventCache.HISTORY, alert_id, Time.now(), self, meta=id_meta)
 		
 		scheduling_data = self.generate_scheduling_data(message, metadata, alert_data)
 		self.send_scheduling_data(scheduling_data, alert_id, is_test, is_update)
@@ -839,23 +876,55 @@ class AlertFilter:
 
 
 class LVKAlertFilter(AlertFilter):
-	def __init__(self, history: dict, sender: AlertSender, allow_tests: bool=False,
-	             alert_type="INITIAL", obs_window_h: float=OBS_WINDOW_H,
-	             obs_sun_alt_max_deg: float=OBS_SUN_ALT_MAX_DEG,
-	             obs_min_alt_deg: float=OBS_MIN_ALT_DEG, event_cache: RecentEventCache=None):
+	# Trigger thresholds. Section numbers refer to the "Rubin ToO 2026 revised strategy" report.
+	
+	MCHIRP_PROB_MIN = 0.9         # probability required for all chirp-mass range conditions
+	HIGH_B_PROB_MIN = 0.10        # probability in Omega_obs with |b| > 10 deg (§2.1.3 step 4, §2.3.3)
+	
+	# BNS and NSBH mergers (§2.1.3)
+	BNS_NSBH_CLASS_MIN = 0.9      # step 1: P(BNS)+P(NSBH) > 0.9
+	HASNS_MIN = 0.5               # step 1: HasNS >= 0.5
+	HASREMNANT_MIN = 0.10         # step 1: HasRemnant >= 0.10
+	MCHIRP_NS_MAX = 2.3           # step 1: P(Mchirp < 2.3 Msun) >= 0.9
+	MCHIRP_GAP_MAX = 5.5          # step 1: P(2.3 < Mchirp < 5.5 Msun) >= 0.9 ...
+	BNS_NSBH_GAP_CLASS_MIN = 0.1  #         ... and P(BNS)+P(NSBH) > 0.1
+	BNS_MAX_AREA_DEG2 = 1500.     # step 3: trim Omega_obs to at most this area
+	BNS_GOLD_DEG2 = 100.          # step 5: Gold < 100 deg^2
+	BNS_SILVER_DEG2 = 500.        # step 5: Silver < 500 deg^2, Bronze < 1500 deg^2
+	
+	# BBH mergers (§2.2.3)
+	BBH_MCHIRP_MIN = 22.          # P(Mchirp >= 22 Msun) >= 0.9
+	BBH_MAX_AREA_DEG2 = 100.      # full 90% credible area < 100 deg^2
+	BBH_OBS_FRAC_MIN = 0.70       # fraction of total probability in observable pixels > 0.70
+	
+	# Sub-solar mass candidates (§2.3.3)
+	SSM_SEARCH = "SSM"            # value of event.search for the SSM search pipeline(s)
+	HASSSM_MIN = 0.5              # HasSSM >= 0.5
+	SSM_MAX_AREA_DEG2 = 500.      # trim Omega_obs to at most this area
+	SSM_GOLD_DEG2 = 100.          # Gold < 100 deg^2, Silver < 500 deg^2
+	
+	# Gravitationally lensed BNS mergers (§5.1.3)
+	LENSED_MASSGAP_MIN = 0.9      # HasMassGap >= 0.9 ...
+	LENSED_MCHIRP_MIN = 2.3       # ... or P(2.3 < Mchirp < 5.5 Msun) >= 0.9
+	# The report says 5 Msun, but the LVK chirp-mass bins have no edge there (edges are 3.0 and 5.5),
+	# so the nearest edge above is used.
+	LENSED_MCHIRP_MAX = 5.5
+	LENSED_NSBH_MAX = 0.1         # P(NSBH) < 0.1
+	LENSED_MAX_DEG2 = 900.        # 90% credible area <= 900 deg^2
+	LENSED_GOLD_DEG2 = 15.        # Gold < 15 deg^2
+	
+	def __init__(self, history: RecentEventCache, sender: AlertSender, allow_tests: bool=False,
+	             obs_settings: ObservabilitySettings=None, alert_type="INITIAL",
+	             event_cache: RecentEventCache=None):
 		"""
 		Args:
-		    obs_window_h, obs_sun_alt_max_deg, obs_min_alt_deg: Observability settings passed to
-		        observable_mask.
 		    event_cache: Where to record passing BNS/NSBH events for coincidence checks by other
 		                 filters. Defaults to the shared module-level cache.
 		"""
-		super().__init__(history, sender, allow_tests)
+		super().__init__(history, sender, allow_tests, obs_settings)
 		self.allowed_alert_type = alert_type
 		if alert_type != "INITIAL":
 			logger.warning(f"LVKAlertFilter alert type is {alert_type}, not INITIAL")
-		self.obs_settings = {"window_h": obs_window_h, "sun_alt_max": obs_sun_alt_max_deg,
-		                     "min_alt": obs_min_alt_deg}
 		self.event_cache = event_cache if event_cache is not None else recent_events
 	
 	def is_test(self, message, metadata):
@@ -953,13 +1022,10 @@ class LVKAlertFilter(AlertFilter):
 				logger.warning(f"  Chirp mass bound {bound} M☉ is not a bin edge; "
 				               "the straddling bin is excluded")
 		adder = KahanAdder() # overkill, but why not
-		used = []
 		for lower_edge, upper_edge, probability in zip(edges[:-1], edges[1:], probabilities):
 			if lower_edge >= lo - tolerance and upper_edge <= hi + tolerance:
 				adder += probability
-				used.append(f"[{lower_edge}, {upper_edge}]")
-		logger.info(f"  Probability of {lo} M☉ <= Mchirp <= {hi} M☉: {float(adder)} "
-		            f"(bins used: {', '.join(used) if used else 'none'})")
+		logger.info(f"  Probability of {lo} M☉ <= Mchirp <= {hi} M☉: {float(adder)}")
 		return float(adder)
 
 	
@@ -1007,7 +1073,7 @@ class LVKAlertFilter(AlertFilter):
 			result_data["passed_types"].append(category)
 			logger.info(f"LVK alert meets criteria for {category} {description}")
 		
-		is_ssm_search = event.get("search") == SSM_SEARCH
+		is_ssm_search = event.get("search") == self.SSM_SEARCH
 		
 		# Binary Neutron Star Mergers and Neutron Star - Black Hole Mergers (§2.1.3)
 		# Requirements:
@@ -1032,32 +1098,32 @@ class LVKAlertFilter(AlertFilter):
 		if is_ssm_search:
 			logger.info("    SSM search event: not considered as a BNS or NSBH merger")
 		elif far < FAR_1_PER_YR and \
-		  (p_bns_nsbh > BNS_NSBH_CLASS_MIN or
-		   properties.get("HasNS", 0.0) >= HASNS_MIN or
-		   properties.get("HasRemnant", 0.0) >= HASREMNANT_MIN or
-		   p_mchirp(0., MCHIRP_NS_MAX) >= MCHIRP_PROB_MIN or
-		   (p_mchirp(MCHIRP_NS_MAX, MCHIRP_GAP_MAX) >= MCHIRP_PROB_MIN and
-		    p_bns_nsbh > BNS_NSBH_GAP_CLASS_MIN)):
-			untrimmed_area = observable_credible_area(skymap, t0, GW_CRED, **self.obs_settings)
-			if untrimmed_area > BNS_MAX_AREA_DEG2:
+		  (p_bns_nsbh > self.BNS_NSBH_CLASS_MIN or
+		   properties.get("HasNS", 0.0) >= self.HASNS_MIN or
+		   properties.get("HasRemnant", 0.0) >= self.HASREMNANT_MIN or
+		   p_mchirp(0., self.MCHIRP_NS_MAX) >= self.MCHIRP_PROB_MIN or
+		   (p_mchirp(self.MCHIRP_NS_MAX, self.MCHIRP_GAP_MAX) >= self.MCHIRP_PROB_MIN and
+		    p_bns_nsbh > self.BNS_NSBH_GAP_CLASS_MIN)):
+			untrimmed_area = observable_credible_area(skymap, t0, self.obs_settings, GW_CRED)
+			if untrimmed_area > self.BNS_MAX_AREA_DEG2:
 				logger.info(f"    Omega_obs of {untrimmed_area:.1f} deg² is larger than "
-				            f"{BNS_MAX_AREA_DEG2} deg²: only the most probable part will be "
+				            f"{self.BNS_MAX_AREA_DEG2} deg²: only the most probable part will be "
 				            "targeted, and any further response is left to the ToO advisory board")
-			mask, area, obs_prob, high_b_prob = trim_to_observable(skymap, t0, BNS_MAX_AREA_DEG2,
-			                                                       GW_CRED, **self.obs_settings)
+			mask, area, obs_prob, high_b_prob = trim_to_observable(skymap, t0, self.BNS_MAX_AREA_DEG2,
+			                                                       self.obs_settings, GW_CRED)
 			logger.info(f"    BNS/NSBH Omega_obs: {area:.1f} deg², probability {obs_prob:.3f}, "
 			            f"probability with |b| > {GAL_LAT_CUT_DEG}°: {high_b_prob:.3f}")
-			if high_b_prob > HIGH_B_PROB_MIN:
-				if area < BNS_GOLD_DEG2:
+			if high_b_prob > self.HIGH_B_PROB_MIN:
+				if area < self.BNS_GOLD_DEG2:
 					category = "GW_case_Gold"
-				elif area < BNS_SILVER_DEG2:
+				elif area < self.BNS_SILVER_DEG2:
 					category = "GW_case_Silver"
 				else:
 					category = "GW_case_Bronze"
 				accept(category, mask, "BNS or NSBH merger")
 				result_data["bns_nsbh_passed"] = True
-				self.event_cache.add(LVK_BNS_NSBH_EVENT, message["superevent_id"], t0,
-				                     skymap.credible_mask(GW_CRED, PROB_MAP_ORDER))
+				self.event_cache.add(RecentEventCache.LVK_BNS_NSBH, message["superevent_id"], t0,
+				                     self, skymap.credible_mask(GW_CRED, PROB_MAP_ORDER))
 		
 		# Gravitationally lensed Binary Neutron Star mergers (§5.1.3)
 		# Requirements:
@@ -1072,15 +1138,15 @@ class LVKAlertFilter(AlertFilter):
 		# Further categorization:
 		# - Gold: 90% area < 15 square degrees
 		# - Silver: 90% area <= 900 square degrees
-		if (properties.get("HasMassGap", 0.0) >= LENSED_MASSGAP_MIN or
-		    p_mchirp(LENSED_MCHIRP_MIN, LENSED_MCHIRP_MAX) >= MCHIRP_PROB_MIN) and \
-		  classification.get("NSBH", 0.0) < LENSED_NSBH_MAX and \
+		if (properties.get("HasMassGap", 0.0) >= self.LENSED_MASSGAP_MIN or
+		    p_mchirp(self.LENSED_MCHIRP_MIN, self.LENSED_MCHIRP_MAX) >= self.MCHIRP_PROB_MIN) and \
+		  classification.get("NSBH", 0.0) < self.LENSED_NSBH_MAX and \
 		  far < FAR_1_PER_YR and \
-		  prob_area_deg2 <= LENSED_MAX_DEG2:
-			mask = trim_to_observable(skymap, t0, LENSED_MAX_DEG2, GW_CRED, **self.obs_settings)[0]
+		  prob_area_deg2 <= self.LENSED_MAX_DEG2:
+			mask = trim_to_observable(skymap, t0, self.LENSED_MAX_DEG2, self.obs_settings, GW_CRED)[0]
 			if not mask.any():
 				logger.warning("    No part of the lensed BNS credible region is observable")
-			accept("lensed_BNS_case_B" if prob_area_deg2 < LENSED_GOLD_DEG2 else "lensed_BNS_case_A",
+			accept("lensed_BNS_case_B" if prob_area_deg2 < self.LENSED_GOLD_DEG2 else "lensed_BNS_case_A",
 			       mask, "lensed BNS merger")
 
 		# Black Hole-Black Hole Mergers (§2.2.3)
@@ -1089,14 +1155,14 @@ class LVKAlertFilter(AlertFilter):
 		# - FAR < 1 per year
 		# - Full 90% credible area < 100 deg²
 		# - Fraction of the total probability lying in observable pixels > 0.70
-		if p_mchirp(BBH_MCHIRP_MIN, math.inf) >= MCHIRP_PROB_MIN and \
+		if p_mchirp(self.BBH_MCHIRP_MIN, math.inf) >= self.MCHIRP_PROB_MIN and \
 		  far < FAR_1_PER_YR and \
-		  prob_area_deg2 < BBH_MAX_AREA_DEG2:
+		  prob_area_deg2 < self.BBH_MAX_AREA_DEG2:
 			prob = skymap.flat_prob_map(PROB_MAP_ORDER)
-			obs_fraction = float(prob[observable_mask(1<<PROB_MAP_ORDER, t0, **self.obs_settings)].sum())
+			obs_fraction = float(prob[observable_mask(1<<PROB_MAP_ORDER, t0, self.obs_settings)].sum())
 			logger.info(f"    BBH observable probability fraction: {obs_fraction:.3f}")
-			if obs_fraction > BBH_OBS_FRAC_MIN:
-				mask = trim_to_observable(skymap, t0, BBH_MAX_AREA_DEG2, GW_CRED, **self.obs_settings)[0]
+			if obs_fraction > self.BBH_OBS_FRAC_MIN:
+				mask = trim_to_observable(skymap, t0, self.BBH_MAX_AREA_DEG2, self.obs_settings, GW_CRED)[0]
 				accept("BBH", mask, "binary black hole merger")
 		
 		# Sub-solar mass candidates (§2.3.3)
@@ -1111,14 +1177,14 @@ class LVKAlertFilter(AlertFilter):
 		# - Gold: < 100 deg²
 		# - Silver: < 500 deg²
 		if is_ssm_search and \
-		  properties.get("HasSSM", 0.0) >= HASSSM_MIN and \
+		  properties.get("HasSSM", 0.0) >= self.HASSSM_MIN and \
 		  far < FAR_1_PER_3YR:
-			mask, area, obs_prob, high_b_prob = trim_to_observable(skymap, t0, SSM_MAX_AREA_DEG2,
-			                                                       GW_CRED, **self.obs_settings)
+			mask, area, obs_prob, high_b_prob = trim_to_observable(skymap, t0, self.SSM_MAX_AREA_DEG2,
+			                                                       self.obs_settings, GW_CRED)
 			logger.info(f"    SSM Omega_obs: {area:.1f} deg², probability {obs_prob:.3f}, "
 			            f"probability with |b| > {GAL_LAT_CUT_DEG}°: {high_b_prob:.3f}")
-			if high_b_prob > HIGH_B_PROB_MIN:
-				accept("SSM_Gold" if area < SSM_GOLD_DEG2 else "SSM_Silver", mask,
+			if high_b_prob > self.HIGH_B_PROB_MIN:
+				accept("SSM_Gold" if area < self.SSM_GOLD_DEG2 else "SSM_Silver", mask,
 				       "sub-solar mass merger")
 		
 		passes = len(result_data["passed_types"]) > 0
@@ -1158,23 +1224,31 @@ class LVKAlertFilter(AlertFilter):
 		if not alert_data.get("bns_nsbh_passed", False):
 			return
 		gw_mask = alert_data["skymap"].credible_mask(GW_CRED, PROB_MAP_ORDER)
-		for entry in self.event_cache.find(NEUTRINO_EVENT, message["event"]["time"], NU_COINC_DT_S):
-			if numpy.any(entry["mask"] & gw_mask):
-				entry["filter"].upgrade_to_coincident(entry, alert_id, is_test)
+		for entry in self.event_cache.find(RecentEventCache.NEUTRINO, message["event"]["time"],
+		                                   COINCIDENCE_MAX_DT_S):
+			if numpy.any(entry.mask & gw_mask):
+				entry.filter.upgrade_to_coincident(entry, alert_id, is_test)
 
 
 # This filter should be applicable to other neutrino observatories using the same schema, 
 # maybe rename.
 class IceCubeAlertFilter(AlertFilter):
-	def __init__(self, history: dict, sender: AlertSender, allow_tests: bool=False,
-	             alert_type="initial", obs_window_h: float=OBS_WINDOW_H,
-	             obs_sun_alt_max_deg: float=OBS_SUN_ALT_MAX_DEG,
-	             obs_min_alt_deg: float=OBS_MIN_ALT_DEG, enable_coincidence: bool=False,
-	             event_cache: RecentEventCache=None):
+	# Trigger thresholds. Section numbers refer to the "Rubin ToO 2026 revised strategy" report.
+	
+	# Neutrinos (§3)
+	CRED = 0.9                    # >= 90% of the contour within a single pointing
+	FOV_SR = 9.6*DEG2_TO_SR       # Rubin field of view (~0.002924 sr)
+	EHE_ENERGY_TEV = 1000.        # EHE: energy > 1 PeV (nu_energy is in TeV) ...
+	EHE_PASTRO = 0.5              # ... and p_astro > 0.5
+	COINC_PASTRO = 0.3            # coincident with LVK BNS/NSBH: p_astro > 0.3 ...
+	                              # ... and |dT| < 10 minutes (COINCIDENCE_MAX_DT_S)
+	STD_PASTRO = 0.4              # standard: p_astro > 0.4
+	
+	def __init__(self, history: RecentEventCache, sender: AlertSender, allow_tests: bool=False,
+	             obs_settings: ObservabilitySettings=None, alert_type="initial",
+	             enable_coincidence: bool=False, event_cache: RecentEventCache=None):
 		"""
 		Args:
-		    obs_window_h, obs_sun_alt_max_deg, obs_min_alt_deg: Observability settings used to
-		        check that the localisation centroid can be observed.
 		    enable_coincidence: Whether to look for coincidences with LVK BNS/NSBH alerts which have
 		                        passed filtering, to produce neutrino_coincident alerts. When enabled,
 		                        neutrinos which pass the common criteria with p_astro > 0.3 are also
@@ -1182,12 +1256,10 @@ class IceCubeAlertFilter(AlertFilter):
 		    event_cache: Where to look for and store events for coincidence checks. Defaults to the
 		                 shared module-level cache.
 		"""
-		super().__init__(history, sender, allow_tests)
+		super().__init__(history, sender, allow_tests, obs_settings)
 		self.allowed_alert_type = alert_type
 		if alert_type != "initial":
 			logger.warning(f"IceCubeAlertFilter alert type is {alert_type}, not initial")
-		self.obs_settings = {"window_h": obs_window_h, "sun_alt_max": obs_sun_alt_max_deg,
-		                     "min_alt": obs_min_alt_deg}
 		self.enable_coincidence = enable_coincidence
 		self.event_cache = event_cache if event_cache is not None else recent_events
 	
@@ -1213,12 +1285,13 @@ class IceCubeAlertFilter(AlertFilter):
 		alert_id, id_meta = self.alert_identifier(message, metadata)
 		if message["alert_type"] == "retraction":
 			# a retracted neutrino must not be followed up later due to a coincidence
-			self.event_cache.remove(NEUTRINO_EVENT, alert_id)
+			self.event_cache.remove(RecentEventCache.NEUTRINO, alert_id)
 		if message["alert_type"] != self.allowed_alert_type:
 			return False, {}
 		# "ToOs should not be performed if an alert is retracted"
+		previous = self.history.get(RecentEventCache.HISTORY, alert_id)
 		if message["alert_type"] == "retraction" or \
-		  (self.history.get(alert_id) or {}).get("type") == "retraction":
+		  (previous is not None and (previous["meta"] or {}).get("type") == "retraction"):
 			return False, {}
 		# Maps including systematic uncertainties are expected only with later 'update' alerts, so
 		# this is required only when not processing 'initial' alerts.
@@ -1240,9 +1313,9 @@ class IceCubeAlertFilter(AlertFilter):
 		# - Standard: p_astro > 0.4
 		
 		p_astro = message.get("p_astro") or 0.0
-		min_p_astro = min(NU_STD_PASTRO, NU_EHE_PASTRO)
+		min_p_astro = min(self.STD_PASTRO, self.EHE_PASTRO)
 		if self.enable_coincidence:
-			min_p_astro = min(min_p_astro, NU_COINC_PASTRO)
+			min_p_astro = min(min_p_astro, self.COINC_PASTRO)
 		if p_astro <= min_p_astro:
 			return False, {}
 		
@@ -1253,9 +1326,9 @@ class IceCubeAlertFilter(AlertFilter):
 			return False, {}
 		
 		t0 = message["trigger_time"]
-		if not _observable(message["ra"], message["dec"], t0, **self.obs_settings)[0]:
+		if not observable_at(message["ra"], message["dec"], t0, self.obs_settings)[0]:
 			logger.info("Neutrino alert centroid is not observable at airmass < 2 within "
-			            f"{self.obs_settings['window_h']} hours")
+			            f"{self.obs_settings.window_h} hours")
 			return False, {}
 		
 		# get skymap via separate HTTP
@@ -1292,7 +1365,7 @@ class IceCubeAlertFilter(AlertFilter):
 			else:
 				raise RuntimeError(f"Unexpected healpix ordering: {ordering}")
 		
-		prob_area, min_dec = skymap.area_for_probability(NU_CRED)
+		prob_area, min_dec = skymap.area_for_probability(self.CRED)
 		logger.info(f"Neutrino alert with 90% probability area of {prob_area} sr, "
 		            f"minimum declination: {min_dec} radians")
 		
@@ -1304,28 +1377,29 @@ class IceCubeAlertFilter(AlertFilter):
 		# This does not, however, rule out cases in which the area is smaller than the field of
 		# view, but distributed in such a way that it cannot be fit inside the shape of the field
 		# of view.
-		if prob_area > RUBIN_FOV_SR:
+		if prob_area > self.FOV_SR:
 			return False, {}
 		
 		if self.enable_coincidence:
 			# Remember this neutrino, whichever category it falls into (if any), so that if an LVK
 			# BNS/NSBH alert for a coincident event arrives later it can be upgraded to
 			# neutrino_coincident.
-			previous = self.event_cache.get(NEUTRINO_EVENT, alert_id)
-			self.event_cache.add(NEUTRINO_EVENT, alert_id, t0, skymap.credible_mask(NU_CRED, PROB_MAP_ORDER),
-			                     filter=self, message=message, metadata=metadata,
+			previous = self.event_cache.get(RecentEventCache.NEUTRINO, alert_id)
+			self.event_cache.add(RecentEventCache.NEUTRINO, alert_id, t0, self,
+			                     skymap.credible_mask(self.CRED, PROB_MAP_ORDER),
+			                     message=message, metadata=metadata,
 			                     alert_data={"skymap": skymap, "90%_area": prob_area},
 			                     id_meta=id_meta, is_test=self.is_test(message, metadata),
 			                     sent_type=previous["sent_type"] if previous is not None else None)
 		
 		energy = message.get("nu_energy") or 0.0  # TeV
 		category = None
-		if energy > NU_EHE_ENERGY_TEV and p_astro > NU_EHE_PASTRO:
+		if energy > self.EHE_ENERGY_TEV and p_astro > self.EHE_PASTRO:
 			category = "neutrino_EHE"
-		elif self.enable_coincidence and p_astro > NU_COINC_PASTRO and \
+		elif self.enable_coincidence and p_astro > self.COINC_PASTRO and \
 		  self.find_coincident_gw(skymap, t0):
 			category = "neutrino_coincident"
-		elif p_astro > NU_STD_PASTRO:
+		elif p_astro > self.STD_PASTRO:
 			category = "neutrino"
 		if category is None:
 			return False, {}
@@ -1337,27 +1411,27 @@ class IceCubeAlertFilter(AlertFilter):
 	
 	def find_coincident_gw(self, skymap: Skymap, t0):
 		"""
-		Look for LVK BNS/NSBH events which passed filtering within NU_COINC_DT_S of t0 and whose 90%
+		Look for LVK BNS/NSBH events which passed filtering within COINCIDENCE_MAX_DT_S of t0 and whose 90%
 		credible regions overlap the neutrino's.
 		
 		This can only find LVK events which have already been processed. LVK Initial alerts usually
 		arrive long after neutrino alerts, so the reverse case is handled by LVKAlertFilter.after_send
 		and upgrade_to_coincident.
 		"""
-		nu_mask = skymap.credible_mask(NU_CRED, PROB_MAP_ORDER)
-		for entry in self.event_cache.find(LVK_BNS_NSBH_EVENT, t0, NU_COINC_DT_S):
-			if numpy.any(nu_mask & entry["mask"]):
-				logger.info(f"Neutrino alert is coincident with {entry['source']}")
+		nu_mask = skymap.credible_mask(self.CRED, PROB_MAP_ORDER)
+		for entry in self.event_cache.find(RecentEventCache.LVK_BNS_NSBH, t0, COINCIDENCE_MAX_DT_S):
+			if numpy.any(nu_mask & entry.mask):
+				logger.info(f"Neutrino alert is coincident with {entry.source}")
 				return True
 		return False
 	
 	def after_send(self, message, metadata, alert_data, alert_id, is_test: bool):
 		# record what has been sent for this neutrino, in case it is later upgraded
-		entry = self.event_cache.get(NEUTRINO_EVENT, alert_id)
+		entry = self.event_cache.get(RecentEventCache.NEUTRINO, alert_id)
 		if entry is not None:
 			entry["sent_type"] = alert_data["type"]
 	
-	def upgrade_to_coincident(self, entry: dict, gw_source: str, gw_is_test: bool):
+	def upgrade_to_coincident(self, entry: RecentEventCache.Entry, gw_source: str, gw_is_test: bool):
 		"""
 		Send a neutrino_coincident alert for a neutrino from the recent event cache which has been
 		found to coincide with an LVK BNS/NSBH event which passed filtering after the neutrino alert
@@ -1370,18 +1444,18 @@ class IceCubeAlertFilter(AlertFilter):
 			return False
 		alert_data = dict(entry["alert_data"], type="neutrino_coincident")
 		is_update = entry["sent_type"] is not None
-		logger.info(f"Neutrino {entry['source']} is coincident with {gw_source}; sending "
+		logger.info(f"Neutrino {entry.source} is coincident with {gw_source}; sending "
 		            f"{alert_data['type']} {'update' if is_update else 'alert'}")
-		self.history[entry["source"]] = entry["id_meta"]
+		self.history.add(RecentEventCache.HISTORY, entry.source, Time.now(), self, meta=entry["id_meta"])
 		scheduling_data = self.generate_scheduling_data(entry["message"], entry["metadata"], alert_data)
-		self.send_scheduling_data(scheduling_data, entry["source"], entry["is_test"] or gw_is_test,
+		self.send_scheduling_data(scheduling_data, entry.source, entry["is_test"] or gw_is_test,
 		                          is_update)
 		entry["sent_type"] = alert_data["type"]
 		return True
 	
 	def generate_scheduling_data(self, message, metadata, alert_data):
 		target_order = 5
-		flat_map = alert_data["skymap"].make_flat_binary_map(NU_CRED, target_order)
+		flat_map = alert_data["skymap"].make_flat_binary_map(self.CRED, target_order)
 		return {"instrument": [message["mission"]],
 		        "alert_type": alert_data["type"],
 		        "event_trigger_timestamp": message["trigger_time"],
@@ -1392,9 +1466,9 @@ class IceCubeAlertFilter(AlertFilter):
 
 # this might or might not be replaced by a more general supernova filter
 class SuperKAlertFilter(AlertFilter):
-	def __init__(self, history: dict, sender: AlertSender, allow_tests: bool=False,
-	             alert_type="initial"):
-		super().__init__(history, sender, allow_tests)
+	def __init__(self, history: RecentEventCache, sender: AlertSender, allow_tests: bool=False,
+	             obs_settings: ObservabilitySettings=None, alert_type="initial"):
+		super().__init__(history, sender, allow_tests, obs_settings)
 		self.allowed_alert_type = alert_type
 	
 	def is_test(self, message, metadata):
@@ -1507,6 +1581,14 @@ if __name__ == "__main__":
 						f"{list(filter_constructors.keys())}")
 	parser.add_argument("--filter-settings", type=json.loads, default={}, 
 	                    help="mapping of filter types to dinstinct settings for each")
+	parser.add_argument("--observability-settings", type=json.loads, default={}, 
+	                    help="settings defining what is observable from Rubin, for all filters: "
+	                    "a mapping with any of the keys "
+	                    f"{list(ObservabilitySettings.__dataclass_fields__.keys())}")
+	parser.add_argument("--history-max-age-days", type=float, default=None, 
+	                    help="how long, in days, to remember alerts which have been seen, in order "
+	                    "to filter duplicates; by default "
+	                    f"{AlertFilter.DEFAULT_HISTORY_MAX_AGE_S/86400.}")
 	parser.add_argument("--output-type", type=str, choices=output_constructors.keys(), default="stdout",
 						help="the mechanism to use for sending passing alert data")
 	parser.add_argument("--output-options", type=json.loads, default={}, 
@@ -1533,8 +1615,9 @@ if __name__ == "__main__":
 	with open("output_schema.json") as schema_file:
 		output_schema = json.load(schema_file)
 
-	# TODO: The history grows unboundedly. How/when should items be removed?
-	history = {}
+	history = AlertFilter.make_history(None if config.history_max_age_days is None
+	                                   else config.history_max_age_days*86400.)
+	obs_settings = ObservabilitySettings(**config.observability_settings)
 
 	# Hack: for a few special cases, move config data around
 	if config.input_type == "files":
@@ -1555,7 +1638,8 @@ if __name__ == "__main__":
 		config.filter_settings[filter] = settings
 	filters = {}
 	for topic, filter in config.filters.items():
-		filters[topic] = filter_constructors[filter](history, sender, **config.filter_settings[filter])
+		filters[topic] = filter_constructors[filter](history, sender, obs_settings=obs_settings,
+		                                             **config.filter_settings[filter])
 
 	for message, metadata in consumer.read(metadata=True, autocommit=False):
 		if metadata.topic not in filters:
